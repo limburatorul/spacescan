@@ -1,0 +1,5 @@
+SpaceScan.exe
+SpaceScan-crash.log
+dist/
+graft/
+*.scan
