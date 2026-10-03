@@ -53,3 +53,9 @@ build.cmd            compiles SpaceScan.exe
 ## Licence
 
 MIT — see [LICENSE](LICENSE).
+
+## More from Protagonist Labs
+
+- [Shelf](https://protagonistlabs.app/shelf/?utm_source=github&utm_medium=readme&utm_campaign=spacescan): every PC game in one library, with the size of each install.
+- [File Labs](https://protagonistlabs.app/filelabs/?utm_source=github&utm_medium=readme&utm_campaign=spacescan): a free dual-pane file manager.
+- [All apps](https://protagonistlabs.app/?utm_source=github&utm_medium=readme&utm_campaign=spacescan): Windows apps that each do one job properly.
