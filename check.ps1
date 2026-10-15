@@ -75,6 +75,38 @@ $diff = $asm.GetType('Comparer').GetMethod('Run').Invoke($null, [object[]]@($bef
 if ($before.Size -ne 18345 -or $diff.Count -ne 1 -or $diff[0].Delta -ne 4000) { throw 'COMPARE MISMATCH' } else { 'COMPARE OK' }
 [IO.File]::Delete($snap)
 
+# Ecosystem: the card, garbage read as absent, Shelf's game folders named only while Shelf is installed.
+$eco = $asm.GetType('Ecosystem')
+$ecoDir = "$root\eco"
+$eco.GetField('Folder', [Reflection.BindingFlags]'Static,NonPublic').SetValue($null, $ecoDir)
+$eco.GetMethod('WriteCard', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, [object[]]@("$PSScriptRoot\SpaceScan.exe", '1.1.0'))
+$cardBytes = [IO.File]::ReadAllBytes("$ecoDir\apps\spacescan.json")
+$card = [Text.Encoding]::UTF8.GetString($cardBytes) | ConvertFrom-Json
+$exeOf = { param($id) $eco.GetMethod('Exe', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, [object[]]@($id)) }
+$gameAt = { param($path) $n = [Activator]::CreateInstance($asm.GetType('Node')); $n.Name = $path
+    $eco.GetMethod('Forget', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, $null) | Out-Null
+    $eco.GetMethod('GameAt', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, [object[]]@($n)) }
+$bought = { $eco.GetMethod('BoughtSomething', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, $null) }
+"Card: schema $($card.schema), $($card.id) $($card.version), BOM: $($cardBytes[0] -eq 0xEF)"
+if ($card.schema -ne 1 -or $card.version -ne '1.1.0' -or $cardBytes[0] -eq 0xEF -or (& $exeOf 'spacescan') -ne "$PSScriptRoot\SpaceScan.exe") { throw 'CARD MISMATCH' } else { 'CARD OK' }
+$utf8 = New-Object Text.UTF8Encoding($false)
+$self = ConvertTo-Json "$PSScriptRoot\SpaceScan.exe"
+$jroot = $root -replace '\\', '\\'
+$games = '{"schema":1,"games":[{"id":"g1","name":"Big Game","installDir":"' + $jroot + '\\Big Game\\","canMove":true},{"id":"g2","name":"Stuck","installDir":"' + $jroot + '\\Stuck"},{"id":"g3","name":"Drive","installDir":"D:\\"}]}'
+[IO.Directory]::CreateDirectory("$ecoDir\data") | Out-Null
+[IO.File]::WriteAllText("$ecoDir\data\shelf.games.json", $games, $utf8)
+$noShelf = & $gameAt "$root\Big Game"
+[IO.File]::WriteAllText("$ecoDir\apps\shelf.json", '{"schema":1,"paid":true,"edition":"trial","exe":' + $self + '}', $utf8)
+$big = & $gameAt "$root\big game"; $stuck = & $gameAt "$root\Stuck"; $drive = & $gameAt 'D:\'
+$trialBought = & $bought
+[IO.File]::WriteAllText("$ecoDir\data\shelf.games.json", '{ broken', $utf8)
+$broken = & $gameAt "$root\Big Game"
+[IO.File]::WriteAllText("$ecoDir\apps\shelf.json", '{"schema":1,"paid":true,"edition":"full","exe":' + $self + '}', $utf8)
+[IO.File]::WriteAllText("$ecoDir\apps\reel.json", '{"schema":1,"paid":true,"edition":"full","exe":"C:\\gone\\Reel.exe"}', $utf8)
+$reelGone = & $exeOf 'reel'
+"Shelf games: without Shelf=$noShelf; '$($big.Name)' canMove=$($big.CanMove); '$($stuck.Name)' canMove=$($stuck.CanMove); a drive=$drive; broken file=$broken; trial bought=$trialBought, full bought=$(& $bought); uninstalled Reel=$reelGone"
+if ($noShelf -or $big.Id -ne 'g1' -or -not $big.CanMove -or $stuck.CanMove -or $drive -or $broken -or $trialBought -or -not (& $bought) -or $reelGone) { throw 'ECOSYSTEM MISMATCH' } else { 'ECOSYSTEM OK' }
+
 cmd /c rd /s /q "\\?\$root"
 
 # MFT path (admin only): C:\Windows totals from the MFT must match the classic walk within 2%.

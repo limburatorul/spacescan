@@ -16,6 +16,7 @@ using System.Windows.Interop;
 using System.Windows.Markup;
 using System.Windows.Media;
 using System.Windows.Threading;
+using System.Web.Script.Serialization;
 using Microsoft.VisualBasic.FileIO;
 using Microsoft.Win32;
 using WinForms = System.Windows.Forms;
@@ -24,8 +25,119 @@ using WinForms = System.Windows.Forms;
 [assembly: System.Reflection.AssemblyProduct("SpaceScan")]
 [assembly: System.Reflection.AssemblyCompany("Protagonist Labs")]
 [assembly: System.Reflection.AssemblyCopyright("MIT licence")]
-[assembly: System.Reflection.AssemblyVersion("1.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.1.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.1.0")]
+
+// The folder the Protagonist Labs apps share on this PC (%APPDATA%\ProtagonistLabs): each app writes its card in
+// apps\, and what it offers the others in data\. SpaceScan writes its card, and reads Shelf's games, to name their
+// install folders and offer "Move with Shelf", and the other cards, for Settings → Integration. Anything read
+// from here may be missing or broken: that just means "not there".
+static class Ecosystem
+{
+    internal static string Folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ProtagonistLabs");
+    internal static readonly string[][] PaidApps = { new[] { "shelf", "Shelf" }, new[] { "stash", "Stash" }, new[] { "frostpane", "Frostpane" }, new[] { "reel", "Reel" }, new[] { "planner", "Planner" }, new[] { "reminder", "Reminder" } };
+
+    internal class Game { public string Id, Name; public bool CanMove; }
+
+    static Dictionary<string, Game> games = new Dictionary<string, Game>(StringComparer.OrdinalIgnoreCase);
+    static DateTime gamesRead = DateTime.MinValue;
+
+    internal static void WriteCard(string exe, string version)
+    {
+        try
+        {
+            string dir = Path.Combine(Folder, "apps"), path = Path.Combine(dir, "spacescan.json");
+            Directory.CreateDirectory(dir);
+            string json = "{\n  \"schema\": 1,\n  \"updated\": " + Q(DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture))
+                + ",\n  \"id\": \"spacescan\",\n  \"name\": \"SpaceScan\",\n  \"version\": " + Q(version) + ",\n  \"exe\": " + Q(exe)
+                + ",\n  \"edition\": \"free\",\n  \"paid\": false,\n  \"page\": \"https://protagonistlabs.app/spacescan/\""
+                + ",\n  \"commands\": { \"scan\": [\"{path}\"] }\n}\n";
+            File.WriteAllText(path + ".tmp", json, new UTF8Encoding(false));
+            if (File.Exists(path)) File.Replace(path + ".tmp", path, null); else File.Move(path + ".tmp", path);
+        }
+        catch (Exception) { } // a courtesy to the other apps, never worth a broken start
+    }
+
+    static string Q(string s)
+    {
+        var b = new StringBuilder("\"");
+        foreach (char c in s)
+            if (c == '"' || c == '\\') b.Append('\\').Append(c);
+            else if (c < ' ') b.Append("\\u").Append(((int)c).ToString("x4"));
+            else b.Append(c);
+        return b.Append('"').ToString();
+    }
+
+    // A shared file as JSON, or null unless it's a schema-1 object.
+    static Dictionary<string, object> Read(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return null;
+            var o = new JavaScriptSerializer { MaxJsonLength = int.MaxValue }.DeserializeObject(File.ReadAllText(path)) as Dictionary<string, object>;
+            object schema;
+            return o != null && o.TryGetValue("schema", out schema) && Equals(schema, 1) ? o : null;
+        }
+        catch (Exception) { return null; }
+    }
+
+    static string Str(Dictionary<string, object> o, string key)
+    {
+        object v;
+        return o != null && o.TryGetValue(key, out v) ? v as string : null;
+    }
+
+    // An app's exe from its card, or null when it isn't installed (no card, a broken one, or its exe is gone).
+    internal static string Exe(string id)
+    {
+        string exe = Str(Read(Path.Combine(Path.Combine(Folder, "apps"), id + ".json")), "exe");
+        return exe != null && File.Exists(exe) ? exe : null;
+    }
+
+    // Someone bought a Protagonist Labs app here: the discount line may be shown.
+    internal static bool BoughtSomething()
+    {
+        try
+        {
+            return Directory.GetFiles(Path.Combine(Folder, "apps"), "*.json").Any(f =>
+            {
+                var c = Read(f);
+                object paid;
+                return c != null && c.TryGetValue("paid", out paid) && Equals(paid, true) && Str(c, "edition") == "full"
+                    && Exe(Path.GetFileNameWithoutExtension(f)) != null;
+            });
+        }
+        catch (Exception) { return false; }
+    }
+
+    // The Shelf game installed in this folder, if any. Re-read every couple of minutes, not per row.
+    internal static Game GameAt(Node n)
+    {
+        if (DateTime.UtcNow - gamesRead > TimeSpan.FromMinutes(2)) LoadGames();
+        Game g;
+        return n != null && games.Count > 0 && games.TryGetValue(n.FullPath.TrimEnd('\\'), out g) ? g : null;
+    }
+
+    static void LoadGames()
+    {
+        gamesRead = DateTime.UtcNow;
+        var found = new Dictionary<string, Game>(StringComparer.OrdinalIgnoreCase);
+        object list = null;
+        var data = Exe("shelf") != null ? Read(Path.Combine(Path.Combine(Folder, "data"), "shelf.games.json")) : null;
+        if (data != null) data.TryGetValue("games", out list);
+        foreach (var g in ((list as object[]) ?? new object[0]).OfType<Dictionary<string, object>>())
+        {
+            string dir = (Str(g, "installDir") ?? "").TrimEnd('\\'), id = Str(g, "id");
+            object canMove;
+            if (dir.Length < 3 || string.IsNullOrEmpty(id)) continue; // never a whole drive
+            found[dir] = new Game { Id = id, Name = Str(g, "name") ?? id, CanMove = g.TryGetValue("canMove", out canMove) && Equals(canMove, true) };
+        }
+        games = found;
+    }
+
+    // The next lookup reads the files again.
+    internal static void Forget() { gamesRead = DateTime.MinValue; }
+}
 
 static class Brand
 {
@@ -67,7 +179,8 @@ public class Row : INotifyPropertyChanged
     public Thickness Indent { get { return new Thickness(Level * 18, 0, 0, 0); } }
     public string IconData { get { return Node != null ? FolderIcon : File.Summary ? "M0,0" : FileIcon; } }
     public Brush IconBrush { get { return Node != null ? Brand.Accent : Brand.Dimmer; } }
-    public string DisplayName { get { return Node != null ? Node.Name + (Node.Denied ? "   (access denied)" : "") : File.Name; } }
+    public string DisplayName { get { return Node != null ? Node.Name + (Node.Denied ? "   (access denied)" : "") + GameLabel : File.Name; } }
+    string GameLabel { get { var g = Ecosystem.GameAt(Node); return g == null ? "" : string.Equals(g.Name, Node.Name, StringComparison.OrdinalIgnoreCase) ? "   · in Shelf" : "   · " + g.Name + " in Shelf"; } }
     public Brush NameBrush { get { return Node != null ? (Node.Denied ? Brand.Pink : Brand.Text) : File.Summary ? Brand.Dimmer : Brand.Dim; } }
     public double BarWidth { get { return Math.Max(Size > 0 ? 1 : 0, Fraction * 150); } }
     public Brush BarBrush { get { return Node != null ? Brand.Accent : Brand.Dim; } }
@@ -378,6 +491,7 @@ class MainUI
         excludePopup.Opened += delegate { RefreshIntegration(); };
         LoadExclusions();
         RegisterSelf();
+        ThreadPool.QueueUserWorkItem(delegate { Ecosystem.WriteCard(ExePath, typeof(MainUI).Assembly.GetName().Version.ToString(3)); });
         Find<Button>("findBtn").Click += delegate { RunSearch(); };
         Find<Button>("dupBtn").Click += delegate { RunDupes(); };
         foreach (var box in new[] { findName, findSize, findAge })
@@ -421,11 +535,14 @@ class MainUI
         topList.ContextMenu = menu;
         foundList.ContextMenu = menu;
         dupList.ContextMenu = menu;
+        var shelfItem = menu.Items.OfType<MenuItem>().First(i => (string)i.Tag == "shelfmove");
         ContextMenuEventHandler opening = (s, e) =>
         {
             var tags = MenuTags();
             if (tags.Count == 0) { e.Handled = true; return; }
             foreach (var item in menu.Items.OfType<MenuItem>()) item.IsEnabled = !busy;
+            var game = tags.Count == 1 ? Ecosystem.GameAt(tags[0] as Node) : null;
+            shelfItem.Visibility = game != null && game.CanMove ? Visibility.Visible : Visibility.Collapsed;
         };
         foreach (var list in new[] { treeList, topList, foundList, dupList }) list.ContextMenuOpening += opening;
 
@@ -616,6 +733,59 @@ class MainUI
             ? "File Labs is installed — the row menu can open a folder in it"
             : "File Labs is not installed — the menu item opens its page";
         Find<Button>("fileLabsBtn").Content = exe != null ? "Open" : "Get it";
+        RefreshWorksWith();
+    }
+
+    // Settings → Integration → Works with: one quiet line per sister app that adds something here, and the discount
+    // once, last, when a bought app is on this PC. Read again each time the panel opens.
+    void RefreshWorksWith()
+    {
+        const string utm = "utm_source=spacescan&utm_medium=app&utm_campaign=works-with";
+        var panel = Find<StackPanel>("worksWith");
+        panel.Children.Clear();
+        Ecosystem.Forget();
+        string shelf = Ecosystem.Exe("shelf");
+        var line = WorksWithLine(panel);
+        line.Inlines.Add(QuietLink("Shelf", shelf ?? "https://protagonistlabs.app/shelf/?" + utm));
+        line.Inlines.Add(shelf != null ? " · names its games' folders here, and moves a game from the row menu"
+                                       : " · would name its games' folders here and move a game for you");
+        if (!Ecosystem.BoughtSomething()) return;
+        var missing = Ecosystem.PaidApps.Where(a => Ecosystem.Exe(a[0]) == null).Take(4).ToList();
+        if (missing.Count == 0) return;
+        line = WorksWithLine(panel);
+        line.Inlines.Add("Owners of one of our apps get 30% off the others: ");
+        foreach (var a in missing)
+        {
+            if (a != missing[0]) line.Inlines.Add(" · ");
+            line.Inlines.Add(QuietLink(a[1], "https://protagonistlabs.app/" + a[0] + "/?code=" + (a[0] == "shelf" ? "SECOND30SHELF" : "SECOND30") + "&" + utm));
+        }
+    }
+
+    static TextBlock WorksWithLine(StackPanel panel)
+    {
+        var line = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 11.5, Foreground = Brand.Dim, Margin = new Thickness(0, 6, 0, 0) };
+        panel.Children.Add(line);
+        return line;
+    }
+
+    // A name in the line's own colour, underlined only under the pointer.
+    System.Windows.Documents.Hyperlink QuietLink(string text, string target)
+    {
+        var link = new System.Windows.Documents.Hyperlink(new System.Windows.Documents.Run(text)) { Foreground = Brand.Dim, TextDecorations = null, Cursor = Cursors.Hand };
+        link.MouseEnter += delegate { link.TextDecorations = TextDecorations.Underline; };
+        link.MouseLeave += delegate { link.TextDecorations = null; };
+        link.Click += delegate { Launch(target, null); };
+        return link;
+    }
+
+    // Shelf's own move dialog for the game in this folder: Shelf moves it and keeps its library right.
+    void MoveWithShelf(object tag)
+    {
+        var game = Ecosystem.GameAt(tag as Node);
+        string exe = Ecosystem.Exe("shelf");
+        if (game == null || exe == null || game.Id.Contains("\"")) return; // an id can't break out of its quotes
+        try { Process.Start(new ProcessStartInfo(exe, "--move \"" + game.Id + "\"")); }
+        catch (Exception ex) { Error(ex.Message); }
     }
 
     void Launch(string what, string argument)
@@ -1178,6 +1348,7 @@ class MainUI
             case "open": Open(first); break;
             case "explorer": ShowInExplorer(first); break;
             case "filelabs": OpenInFileLabs(first); break;
+            case "shelfmove": MoveWithShelf(first); break;
             case "copypath": CopyPath(tags); break;
             case "copy": CopyMove(tags, false); break;
             case "move": CopyMove(tags, true); break;
