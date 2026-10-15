@@ -450,6 +450,12 @@
           </DockPanel>
           <TextBlock Style="{StaticResource Eyebrow}" Text="WORKS WITH" Margin="0,16,0,0"/>
           <StackPanel x:Name="worksWith"/>
+          <Border Height="1" Background="{StaticResource Edge}" Margin="0,16,0,0"/>
+          <TextBlock Style="{StaticResource Eyebrow}" Text="VERSION" Margin="0,16,0,0"/>
+          <DockPanel Margin="0,10,0,0">
+            <Button x:Name="updateBtn" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Check for updates" Margin="10,0,0,0"/>
+            <TextBlock x:Name="updateText" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{StaticResource Dim}"/>
+          </DockPanel>
         </StackPanel>
       </Border>
     </Popup>

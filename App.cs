@@ -25,8 +25,8 @@ using WinForms = System.Windows.Forms;
 [assembly: System.Reflection.AssemblyProduct("SpaceScan")]
 [assembly: System.Reflection.AssemblyCompany("Protagonist Labs")]
 [assembly: System.Reflection.AssemblyCopyright("MIT licence")]
-[assembly: System.Reflection.AssemblyVersion("1.1.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.1.0")]
+[assembly: System.Reflection.AssemblyVersion("1.2.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.2.0")]
 
 // The folder the Protagonist Labs apps share on this PC (%APPDATA%\ProtagonistLabs): each app writes its card in
 // apps\, and what it offers the others in data\. SpaceScan writes its card, and reads Shelf's games, to name their
@@ -137,6 +137,89 @@ static class Ecosystem
 
     // The next lookup reads the files again.
     internal static void Forget() { gamesRead = DateTime.MinValue; }
+}
+
+// Self-update, the way Sysoptimizer does it: GitHub's latest release, its *setup.exe checked against the size and
+// SHA-256 GitHub published for it, then a detached one-shot .cmd that waits for this process to end, runs the
+// installer silently and starts SpaceScan again. Nothing in this process can outlive the installer replacing it.
+static class Updater
+{
+    const string Repo = "limburatorul/spacescan";
+
+    internal class Release { public Version Version; public string Tag, Url, Sha256; public long Size; }
+
+    internal static Version Current { get { var v = typeof(Updater).Assembly.GetName().Version; return new Version(v.Major, v.Minor, v.Build); } }
+
+    /// <summary>The latest release when it is newer than this one, else null - also offline or rate-limited.</summary>
+    internal static Release Newer()
+    {
+        try
+        {
+            System.Net.ServicePointManager.SecurityProtocol |= System.Net.SecurityProtocolType.Tls12; // GitHub takes nothing older
+            Dictionary<string, object> root;
+            using (var web = new System.Net.WebClient())
+            {
+                web.Headers[System.Net.HttpRequestHeader.UserAgent] = "SpaceScan";
+                root = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(
+                    web.DownloadString("https://api.github.com/repos/" + Repo + "/releases/latest"));
+            }
+            string tag = root["tag_name"] as string ?? "";
+            Version version;
+            if (!Version.TryParse(tag.TrimStart('v', 'V'), out version) || version <= Current) return null;
+            var asset = ((System.Collections.IEnumerable)root["assets"]).OfType<Dictionary<string, object>>()
+                .FirstOrDefault(a => (a["name"] as string ?? "").EndsWith("setup.exe", StringComparison.OrdinalIgnoreCase));
+            if (asset == null) return null;
+            object d;
+            string digest = asset.TryGetValue("digest", out d) ? d as string : null;
+            if (digest == null || !digest.StartsWith("sha256:")) return null; // nothing to check it against: never run
+            return new Release { Version = version, Tag = tag, Url = (string)asset["browser_download_url"], Size = Convert.ToInt64(asset["size"]), Sha256 = digest.Substring(7) };
+        }
+        catch (Exception ex)
+        {
+            if (ex is System.Net.WebException || ex is ArgumentException || ex is InvalidOperationException
+                || ex is KeyNotFoundException || ex is InvalidCastException || ex is FormatException) return null;
+            throw;
+        }
+    }
+
+    /// <summary>Downloads the installer to %TEMP% and returns its path; a copy that differs from what GitHub published is deleted.</summary>
+    internal static string Download(Release release)
+    {
+        string path = Path.Combine(Path.GetTempPath(), "SpaceScan-" + release.Version + "-setup.exe");
+        using (var web = new System.Net.WebClient())
+        {
+            web.Headers[System.Net.HttpRequestHeader.UserAgent] = "SpaceScan";
+            web.DownloadFile(release.Url, path);
+        }
+        // The size catches a cut-off download, the checksum everything else: this file is about to run as an installer.
+        string hash = null;
+        if (new FileInfo(path).Length == release.Size)
+            using (var sha = new System.Security.Cryptography.SHA256Managed())
+            using (var file = File.OpenRead(path))
+                hash = BitConverter.ToString(sha.ComputeHash(file)).Replace("-", "");
+        if (hash == null || !hash.Equals(release.Sha256, StringComparison.OrdinalIgnoreCase))
+        {
+            File.Delete(path);
+            throw new IOException("The download doesn't match what GitHub published for it, so it was deleted and not run.");
+        }
+        return path;
+    }
+
+    /// <summary>Hands off to a detached script; the caller then closes so the installer can replace the exe.</summary>
+    internal static void InstallAndRestart(string installer, string exe)
+    {
+        int pid = Process.GetCurrentProcess().Id;
+        string script = Path.Combine(Path.GetTempPath(), "spacescan-update-" + pid + ".cmd");
+        File.WriteAllText(script, string.Join("\r\n", new[] {
+            "@echo off",
+            ":wait",
+            "tasklist /FI \"PID eq " + pid + "\" | find \"" + pid + "\" >nul && (timeout /t 1 /nobreak >nul & goto wait)",
+            "\"" + installer + "\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART",
+            "start \"\" \"" + exe + "\"",
+            "del \"%~f0\""
+        }) + "\r\n");
+        Process.Start(new ProcessStartInfo("cmd.exe", "/c \"" + script + "\"") { CreateNoWindow = true, UseShellExecute = false });
+    }
 }
 
 static class Brand
@@ -492,6 +575,12 @@ class MainUI
         LoadExclusions();
         RegisterSelf();
         ThreadPool.QueueUserWorkItem(delegate { Ecosystem.WriteCard(ExePath, typeof(MainUI).Assembly.GetName().Version.ToString(3)); });
+        // Updates: a few seconds after start, then every 6 hours while open; Settings has the manual check.
+        var updates = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+        updates.Tick += delegate { updates.Interval = TimeSpan.FromHours(6); CheckForUpdates(false); };
+        updates.Start();
+        Find<TextBlock>("updateText").Text = "SpaceScan " + Updater.Current;
+        Find<Button>("updateBtn").Click += delegate { CheckForUpdates(true); };
         Find<Button>("findBtn").Click += delegate { RunSearch(); };
         Find<Button>("dupBtn").Click += delegate { RunDupes(); };
         foreach (var box in new[] { findName, findSize, findAge })
@@ -723,6 +812,58 @@ class MainUI
             }
         }
         catch (Exception ex) { Error(ex.Message); }
+    }
+
+    string dismissedTag; // the release the user said No to: not asked again this session, unless they check by hand
+    bool checking;
+
+    void CheckForUpdates(bool manual)
+    {
+        if (checking) return;
+        checking = true;
+        var text = Find<TextBlock>("updateText");
+        if (manual) text.Text = "Checking…";
+        ThreadPool.QueueUserWorkItem(delegate
+        {
+            var release = Updater.Newer();
+            Window.Dispatcher.BeginInvoke((Action)delegate
+            {
+                checking = false;
+                text.Text = "SpaceScan " + Updater.Current + (manual && release == null ? " — no update found" : "");
+                if (release == null || (!manual && release.Tag == dismissedTag)) return;
+                if (MessageBox.Show(Window, "SpaceScan " + release.Version + " is out (you have " + Updater.Current + ").\n\nInstall it now? SpaceScan will close, update and open again.",
+                        "SpaceScan update", MessageBoxButton.YesNo, MessageBoxImage.Information) != MessageBoxResult.Yes)
+                {
+                    dismissedTag = release.Tag;
+                    return;
+                }
+                Install(release);
+            });
+        });
+    }
+
+    void Install(Updater.Release release)
+    {
+        checking = true; // no second check while this one downloads
+        status.Text = "Downloading SpaceScan " + release.Version + "…";
+        ThreadPool.QueueUserWorkItem(delegate
+        {
+            string installer = null, error = null;
+            try { installer = Updater.Download(release); }
+            catch (Exception ex)
+            {
+                if (!(ex is System.Net.WebException || ex is IOException || ex is UnauthorizedAccessException)) throw;
+                error = ex.Message;
+            }
+            Window.Dispatcher.BeginInvoke((Action)delegate
+            {
+                checking = false;
+                status.Text = "";
+                if (error != null) { Error("The update couldn't be installed: " + error); return; }
+                Updater.InstallAndRestart(installer, ExePath);
+                Window.Close();
+            });
+        });
     }
 
     void RefreshIntegration()
