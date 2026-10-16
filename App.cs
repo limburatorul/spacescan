@@ -25,8 +25,8 @@ using WinForms = System.Windows.Forms;
 [assembly: System.Reflection.AssemblyProduct("SpaceScan")]
 [assembly: System.Reflection.AssemblyCompany("Protagonist Labs")]
 [assembly: System.Reflection.AssemblyCopyright("MIT licence")]
-[assembly: System.Reflection.AssemblyVersion("1.2.2")]
-[assembly: System.Reflection.AssemblyFileVersion("1.2.2")]
+[assembly: System.Reflection.AssemblyVersion("1.2.3")]
+[assembly: System.Reflection.AssemblyFileVersion("1.2.3")]
 
 // The folder the Protagonist Labs apps share on this PC (%APPDATA%\ProtagonistLabs): each app writes its card in
 // apps\, and what it offers the others in data\. SpaceScan writes its card, and reads Shelf's games, to name their
@@ -1120,8 +1120,9 @@ class MainUI
                 {
                     if (Mft.IsNtfsRoot(d)) r = Mft.Scan(d);
                     else how = "classic";
+                    if (r != null && NothingFound(r) != "") throw new IOException("the MFT read found no files on a drive in use");
                 }
-                catch (Exception ex) { how = "classic (MFT unavailable: " + ex.Message + ")"; }
+                catch (Exception ex) { r = null; how = "classic (MFT unavailable: " + ex.Message + ")"; }
                 if (r == null)
                 {
                     Scanner.Total = 0;
@@ -1286,8 +1287,9 @@ class MainUI
             {
                 if (Mft.IsNtfsRoot(path)) r = Mft.Scan(path);
                 mode = r != null ? "MFT (fast)" : "classic (not an NTFS volume root)";
+                if (r != null && NothingFound(r) != "") throw new IOException("the MFT read found no files on a drive in use");
             }
-            catch (Exception ex) { mode = "classic — MFT unavailable: " + ex.Message; }
+            catch (Exception ex) { r = null; mode = "classic — MFT unavailable: " + ex.Message; }
             if (r == null)
             {
                 Stats.Reset();

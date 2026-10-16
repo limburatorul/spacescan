@@ -343,7 +343,12 @@ class Mft
             var rec0 = new byte[Math.Max(recSize, cluster)];
             Read(h, mftLcn * cluster, rec0, rec0.Length);
             if (!Fixup(rec0, 0, recSize)) throw new IOException("MFT record 0 invalid");
-            var runs = DataRuns(rec0, recSize);
+            var runs = MftRuns(h, rec0, cluster);
+            long mapped = 0;
+            foreach (var r in runs) mapped += r.Value * cluster;
+            // A map that doesn't cover the whole MFT would silently drop every record past its end - on a big,
+            // busy volume that can be most of the drive (GitHub issue #1). Better the slow walk than a wrong answer.
+            if (mapped < mftLen) throw new IOException("MFT map covers " + mapped + " of " + mftLen + " bytes");
 
             count = mftLen / recSize;
             parent = new int[count];
@@ -374,37 +379,104 @@ class Mft
         }
     }
 
-    // Returns (LCN, cluster count) pairs of the unnamed $DATA attribute.
-    static List<KeyValuePair<long, long>> DataRuns(byte[] b, int recSize)
+    // The $MFT's own map. On a heavily fragmented MFT the $DATA runs don't fit in record 0: an
+    // $ATTRIBUTE_LIST there points to the extension records holding the rest, in VCN order.
+    List<KeyValuePair<long, long>> MftRuns(SafeFileHandle h, byte[] rec0, int cluster)
     {
-        for (int a = BitConverter.ToUInt16(b, 0x14); a + 8 <= recSize; )
+        var runs = DataRuns(rec0, recSize) ?? new List<KeyValuePair<long, long>>();
+        var more = new List<KeyValuePair<long, long>>(); // (start VCN, record number) of further $DATA pieces
+        for (int a = BitConverter.ToUInt16(rec0, 0x14); a + 8 <= recSize; )
+        {
+            uint type = BitConverter.ToUInt32(rec0, a);
+            int len = BitConverter.ToInt32(rec0, a + 4);
+            if (type == 0xFFFFFFFF || len <= 0) break;
+            if (type == 0x20) // $ATTRIBUTE_LIST: resident, or (an MFT in hundreds of pieces) in clusters of its own
+            {
+                byte[] list; int v, end;
+                if (rec0[a + 8] == 0) { list = rec0; v = a + BitConverter.ToUInt16(rec0, a + 0x14); end = v + BitConverter.ToInt32(rec0, a + 0x10); }
+                else
+                {
+                    long real = BitConverter.ToInt64(rec0, a + 0x30);
+                    if (real <= 0 || real > (64 << 20)) throw new IOException("MFT attribute list of " + real + " bytes");
+                    list = new byte[(real + cluster - 1) / cluster * cluster];
+                    int at = 0;
+                    foreach (var r in Runs(rec0, a))
+                        for (long c = 0; c < r.Value && at < list.Length; c++, at += cluster)
+                        {
+                            var one = new byte[cluster];
+                            Read(h, (r.Key + c) * cluster, one, cluster);
+                            Buffer.BlockCopy(one, 0, list, at, cluster);
+                        }
+                    v = 0; end = (int)real;
+                }
+                for (int e = v; e + 0x1A <= end; )
+                {
+                    int elen = BitConverter.ToUInt16(list, e + 4);
+                    if (elen == 0) break;
+                    long vcn = BitConverter.ToInt64(list, e + 8), seg = BitConverter.ToInt64(list, e + 0x10) & 0xFFFFFFFFFFFF;
+                    if (BitConverter.ToUInt32(list, e) == 0x80 && list[e + 6] == 0 && seg != 0 && vcn > 0)
+                        more.Add(new KeyValuePair<long, long>(vcn, seg));
+                    e += elen;
+                }
+            }
+            a += len;
+        }
+        more.Sort((x, y) => x.Key.CompareTo(y.Key));
+        var b = new byte[Math.Max(recSize, cluster)];
+        foreach (var m in more)
+        {
+            // Where record m lives, from the part of the map already known (extension records sit early in the MFT).
+            long byteOfs = m.Value * recSize, vcn = byteOfs / cluster, at = -1, first = 0;
+            foreach (var r in runs)
+            {
+                if (vcn < first + r.Value) { at = (r.Key + vcn - first) * cluster + byteOfs % cluster; break; }
+                first += r.Value;
+            }
+            if (at < 0) throw new IOException("MFT extension record outside the known map");
+            Read(h, at - at % cluster, b, b.Length);
+            int o = (int)(at % cluster);
+            if (o + recSize > b.Length || !Fixup(b, o, recSize)) throw new IOException("MFT extension record invalid");
+            var piece = DataRuns(b, recSize, o);
+            if (piece == null) throw new IOException("MFT extension record without data");
+            runs.AddRange(piece);
+        }
+        return runs;
+    }
+
+    // Returns (LCN, cluster count) pairs of the unnamed $DATA attribute in the record at o, or null if it has none.
+    static List<KeyValuePair<long, long>> DataRuns(byte[] b, int recSize, int o = 0)
+    {
+        for (int a = o + BitConverter.ToUInt16(b, o + 0x14); a + 8 <= o + recSize; )
         {
             uint type = BitConverter.ToUInt32(b, a);
             int len = BitConverter.ToInt32(b, a + 4);
             if (type == 0xFFFFFFFF || len <= 0) break;
-            if (type == 0x80 && b[a + 8] != 0 && b[a + 9] == 0)
-            {
-                var runs = new List<KeyValuePair<long, long>>();
-                long lcn = 0;
-                for (int p = a + BitConverter.ToUInt16(b, a + 0x20); p < a + len && b[p] != 0; )
-                {
-                    int lenBytes = b[p] & 0xF, ofsBytes = b[p] >> 4;
-                    p++;
-                    long clusters = 0, delta = 0;
-                    for (int i = 0; i < lenBytes; i++) clusters |= (long)b[p + i] << (8 * i);
-                    p += lenBytes;
-                    for (int i = 0; i < ofsBytes; i++) delta |= (long)b[p + i] << (8 * i);
-                    if (ofsBytes > 0 && (b[p + ofsBytes - 1] & 0x80) != 0) delta -= 1L << (8 * ofsBytes); // sign-extend
-                    p += ofsBytes;
-                    lcn += delta;
-                    runs.Add(new KeyValuePair<long, long>(lcn, clusters));
-                }
-                return runs;
-            }
+            if (type == 0x80 && b[a + 8] != 0 && b[a + 9] == 0) return Runs(b, a);
             a += len;
         }
-        // ponytail: $MFT so fragmented its $DATA lives in an extension record; we fall back to the classic scan.
-        throw new IOException("MFT too fragmented");
+        return null;
+    }
+
+    // Decodes the run list of the non-resident attribute at a into (LCN, cluster count) pairs.
+    static List<KeyValuePair<long, long>> Runs(byte[] b, int a)
+    {
+        int len = BitConverter.ToInt32(b, a + 4);
+        var runs = new List<KeyValuePair<long, long>>();
+        long lcn = 0;
+        for (int p = a + BitConverter.ToUInt16(b, a + 0x20); p < a + len && b[p] != 0; )
+        {
+            int lenBytes = b[p] & 0xF, ofsBytes = b[p] >> 4;
+            p++;
+            long clusters = 0, delta = 0;
+            for (int i = 0; i < lenBytes; i++) clusters |= (long)b[p + i] << (8 * i);
+            p += lenBytes;
+            for (int i = 0; i < ofsBytes; i++) delta |= (long)b[p + i] << (8 * i);
+            if (ofsBytes > 0 && (b[p + ofsBytes - 1] & 0x80) != 0) delta -= 1L << (8 * ofsBytes); // sign-extend
+            p += ofsBytes;
+            lcn += delta;
+            runs.Add(new KeyValuePair<long, long>(lcn, clusters));
+        }
+        return runs;
     }
 
     int ExtId(byte[] b, int v)
@@ -962,8 +1034,9 @@ static class Cli
         try
         {
             if (Mft.IsNtfsRoot(path)) { root = Mft.Scan(path); mode = "MFT"; }
+            if (root != null && MainUI.NothingFound(root) != "") throw new IOException("the MFT read found no files on a drive in use");
         }
-        catch (Exception ex) { Console.Error.WriteLine("MFT unavailable (" + ex.Message + "), walking folders instead"); }
+        catch (Exception ex) { root = null; Console.Error.WriteLine("MFT unavailable (" + ex.Message + "), walking folders instead"); }
         if (root == null)
         {
             Stats.Reset();
