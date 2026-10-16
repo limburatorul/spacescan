@@ -971,7 +971,7 @@ static class Cli
             Scanner.Scan(root, path);
             Stats.Trim();
         }
-        Console.WriteLine("{0}: {1} in {2:N0} files, {3:0.0}s, {4} scan", path, Fmt.Size(root.Size), root.Files, (DateTime.Now - started).TotalSeconds, mode);
+        Console.WriteLine("{0}: {1} in {2:N0} files, {3:0.0}s, {4} scan{5}", path, Fmt.Size(root.Size), root.Files, (DateTime.Now - started).TotalSeconds, mode, MainUI.NothingFound(root));
 
         List<Change> changes = null;
         string against = compare;

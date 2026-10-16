@@ -25,8 +25,8 @@ using WinForms = System.Windows.Forms;
 [assembly: System.Reflection.AssemblyProduct("SpaceScan")]
 [assembly: System.Reflection.AssemblyCompany("Protagonist Labs")]
 [assembly: System.Reflection.AssemblyCopyright("MIT licence")]
-[assembly: System.Reflection.AssemblyVersion("1.2.1")]
-[assembly: System.Reflection.AssemblyFileVersion("1.2.1")]
+[assembly: System.Reflection.AssemblyVersion("1.2.2")]
+[assembly: System.Reflection.AssemblyFileVersion("1.2.2")]
 
 // The folder the Protagonist Labs apps share on this PC (%APPDATA%\ProtagonistLabs): each app writes its card in
 // apps\, and what it offers the others in data\. SpaceScan writes its card, and reads Shelf's games, to name their
@@ -1108,18 +1108,27 @@ class MainUI
         StartJob(0, () =>
         {
             var all = new Node { Name = "This PC" };
+            // Per drive, how it was read and why the MFT wasn't: a drive that silently came back empty
+            // (GitHub issue #1, a 6 TB D: on Server 2022) gave nobody anything to go on.
+            var notes = new List<string>();
             foreach (var d in drives)
             {
                 if (Scanner.Cancel) break;
                 Node r = null;
-                try { if (Mft.IsNtfsRoot(d)) r = Mft.Scan(d); }
-                catch (Exception) { }
+                string how = "MFT";
+                try
+                {
+                    if (Mft.IsNtfsRoot(d)) r = Mft.Scan(d);
+                    else how = "classic";
+                }
+                catch (Exception ex) { how = "classic (MFT unavailable: " + ex.Message + ")"; }
                 if (r == null)
                 {
                     Scanner.Total = 0;
                     r = new Node { Name = d };
                     Scanner.Scan(r, d);
                 }
+                notes.Add(d.TrimEnd('\\') + " " + how + NothingFound(r));
                 r.Parent = all;
                 all.Dirs.Add(r);
                 all.Size += r.Size;
@@ -1127,7 +1136,7 @@ class MainUI
             }
             all.Dirs.Sort((a, b) => b.Size.CompareTo(a.Size));
             Stats.Trim();
-            Window.Dispatcher.BeginInvoke(new Action(() => ScanDone(all, drives.Count + " drives")));
+            Window.Dispatcher.BeginInvoke(new Action(() => ScanDone(all, drives.Count + " drives: " + string.Join("; ", notes))));
         });
     }
 
@@ -1288,8 +1297,24 @@ class MainUI
                 Scanner.Scan(r, path);
                 Stats.Trim();
             }
+            mode += NothingFound(r);
             Window.Dispatcher.BeginInvoke(new Action(() => ScanDone(r, mode)));
         }, 256 * 1024 * 1024) { IsBackground = true }.Start();
+    }
+
+    // A whole drive that comes back with no files while Windows says it holds data was read wrongly,
+    // not found empty: say so instead of showing a quiet 0.
+    internal static string NothingFound(Node r)
+    {
+        try
+        {
+            string root = Path.GetPathRoot(r.FullPath);
+            if (r.Files > 0 || root == null || !root.Equals(r.FullPath, StringComparison.OrdinalIgnoreCase)) return "";
+            var d = new DriveInfo(root);
+            long used = d.TotalSize - d.TotalFreeSpace;
+            return used > (1L << 30) ? " — WARNING: no files found although " + Brand.Fmt(used) + " is in use; please report this" : "";
+        }
+        catch (Exception) { return ""; } // no DriveInfo for this path: nothing to compare against
     }
 
     void ScanDone(Node r, string mode)
