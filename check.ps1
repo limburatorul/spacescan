@@ -107,6 +107,33 @@ $reelGone = & $exeOf 'reel'
 "Shelf games: without Shelf=$noShelf; '$($big.Name)' canMove=$($big.CanMove); '$($stuck.Name)' canMove=$($stuck.CanMove); a drive=$drive; broken file=$broken; trial bought=$trialBought, full bought=$(& $bought); uninstalled Reel=$reelGone"
 if ($noShelf -or $big.Id -ne 'g1' -or -not $big.CanMove -or $stuck.CanMove -or $drive -or $broken -or $trialBought -or -not (& $bought) -or $reelGone) { throw 'ECOSYSTEM MISMATCH' } else { 'ECOSYSTEM OK' }
 
+# Updates: a failed check (offline, 403 rate limit, 5xx, an unreadable answer) throws; a readable "nothing newer" is null.
+$upd = $asm.GetType('Updater')
+$feed = $upd.GetField('Feed', [Reflection.BindingFlags]'Static,NonPublic')
+$newer = $upd.GetMethod('Newer', [Reflection.BindingFlags]'Static,NonPublic')
+$isFailure = $upd.GetMethod('Failed', [Reflection.BindingFlags]'Static,NonPublic')
+function Serve($status, $body) {   # one request on localhost, answered from a second runspace
+    $probe = New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback, 0); $probe.Start(); $port = $probe.LocalEndpoint.Port; $probe.Stop()
+    $http = New-Object Net.HttpListener; $http.Prefixes.Add("http://localhost:$port/"); $http.Start()
+    $ps = [powershell]::Create().AddScript({ param($http, $status, $body)
+        $c = $http.GetContext(); $c.Response.StatusCode = $status; $b = [Text.Encoding]::UTF8.GetBytes($body)
+        $c.Response.ContentLength64 = $b.Length; $c.Response.OutputStream.Write($b, 0, $b.Length); $c.Response.Close() }).AddArgument($http).AddArgument($status).AddArgument($body)
+    $null = $ps.BeginInvoke()
+    "http://localhost:$port/"
+}
+function Fails($url) { $feed.SetValue($null, $url); try { $newer.Invoke($null, $null) | Out-Null; $false } catch {
+    $e = $_.Exception   # unwrap the reflection layers only: a WebException's own inner exception is the socket's
+    while ($e -is [Management.Automation.MethodInvocationException] -or $e -is [Reflection.TargetInvocationException]) { $e = $e.InnerException }
+    $isFailure.Invoke($null, [object[]]@($e)) } }
+$offline = Fails 'http://127.0.0.1:9/'
+$limited = Fails (Serve 403 '{"message":"API rate limit exceeded"}')
+$busy = Fails (Serve 502 '')
+$garbage = Fails (Serve 200 '<html>')
+$feed.SetValue($null, (Serve 200 '{"tag_name":"v0.0.1","assets":[{"name":"SpaceScan-0.0.1-setup.exe","browser_download_url":"x","size":1,"digest":"sha256:00"}]}'))
+$nothing = $newer.Invoke($null, $null)
+"Update check fails: offline=$offline 403=$limited 502=$busy garbage=$garbage; nothing newer=$($nothing -eq $null)"
+if (-not ($offline -and $limited -and $busy -and $garbage) -or $nothing -ne $null) { throw 'UPDATE CHECK MISMATCH' } else { 'UPDATE CHECK OK' }
+
 cmd /c rd /s /q "\\?\$root"
 
 # MFT path (admin only): C:\Windows totals from the MFT must match the classic walk within 2%.
