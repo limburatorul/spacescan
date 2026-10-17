@@ -107,6 +107,25 @@ $reelGone = & $exeOf 'reel'
 "Shelf games: without Shelf=$noShelf; '$($big.Name)' canMove=$($big.CanMove); '$($stuck.Name)' canMove=$($stuck.CanMove); a drive=$drive; broken file=$broken; trial bought=$trialBought, full bought=$(& $bought); uninstalled Reel=$reelGone"
 if ($noShelf -or $big.Id -ne 'g1' -or -not $big.CanMove -or $stuck.CanMove -or $drive -or $broken -or $trialBought -or -not (& $bought) -or $reelGone) { throw 'ECOSYSTEM MISMATCH' } else { 'ECOSYSTEM OK' }
 
+# Backup Labs: its backup folders and the folders it backs up are named, only while it is installed. The file is
+# shaped as Backup Labs writes it (Ecosystem.JobsJson there: camelCase, UTC times, lastResult ok/failed/cancelled).
+$node = { param($path) $n = [Activator]::CreateInstance($asm.GetType('Node')); $n.Name = $path
+    $eco.GetMethod('Forget', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, $null) | Out-Null; $n }
+$into = { param($path) $eco.GetMethod('BackupsAt', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, [object[]]@(& $node $path)) }
+$from = { param($path) $eco.GetMethod('BackedUpAt', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, [object[]]@(& $node $path)) }
+$last = { param($job) $eco.GetMethod('LastBackup', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, [object[]]@($job)) }
+$now = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+$jobs = '{"schema":1,"updated":"' + $now + '","jobs":[' +
+    '{"id":"j1","name":"Photos","sources":["' + $jroot + '\\Photos"],"destination":"' + $jroot + '\\Backups\\","format":"folders","lastRun":"' + $now + '","lastResult":"ok"},' +
+    '{"id":"j2","name":"Work","sources":["' + $jroot + '\\Work"],"destination":"E:\\Work backups","format":"encrypted","lastRun":"2026-01-01T10:00:00Z","lastResult":"failed"},' +
+    '{"id":"j3","name":"New","sources":["' + $jroot + '\\New"],"destination":"","format":"zip","lastRun":null,"lastResult":null}]}'
+[IO.File]::WriteAllText("$ecoDir\data\backuplabs.jobs.json", $jobs, $utf8)
+$noBackupLabs = & $into "$root\Backups"
+[IO.File]::WriteAllText("$ecoDir\apps\backuplabs.json", '{"schema":1,"paid":false,"edition":"free","exe":' + $self + '}', $utf8)
+$dest = & $into "$root\backups"; $photos = & $from "$root\Photos"; $work = & $from "$root\Work"; $new = & $from "$root\New"; $plain = & $from "$root\Other"
+"Backup Labs: without it=$noBackupLabs; backups folder of '$($dest.Name)'; Photos '$(& $last $photos)'; Work '$(& $last $work)'; New '$(& $last $new)'; other folder=$plain"
+if ($noBackupLabs -or $dest.Id -ne 'j1' -or (& $last $photos) -ne 'backed up today' -or (& $last $work) -ne 'last backup failed' -or (& $last $new) -ne 'not backed up yet' -or $plain) { throw 'BACKUP LABS MISMATCH' } else { 'BACKUP LABS OK' }
+
 # Updates: a failed check (offline, 403 rate limit, 5xx, an unreadable answer) throws; a readable "nothing newer" is null.
 $upd = $asm.GetType('Updater')
 $feed = $upd.GetField('Feed', [Reflection.BindingFlags]'Static,NonPublic')

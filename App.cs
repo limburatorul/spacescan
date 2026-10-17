@@ -25,8 +25,8 @@ using WinForms = System.Windows.Forms;
 [assembly: System.Reflection.AssemblyProduct("SpaceScan")]
 [assembly: System.Reflection.AssemblyCompany("Protagonist Labs")]
 [assembly: System.Reflection.AssemblyCopyright("MIT licence")]
-[assembly: System.Reflection.AssemblyVersion("1.2.3")]
-[assembly: System.Reflection.AssemblyFileVersion("1.2.3")]
+[assembly: System.Reflection.AssemblyVersion("1.3.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.3.0")]
 
 // The folder the Protagonist Labs apps share on this PC (%APPDATA%\ProtagonistLabs): each app writes its card in
 // apps\, and what it offers the others in data\. SpaceScan writes its card, and reads Shelf's games, to name their
@@ -118,9 +118,64 @@ static class Ecosystem
         return n != null && games.Count > 0 && games.TryGetValue(n.FullPath.TrimEnd('\\'), out g) ? g : null;
     }
 
+    // A Backup Labs job, from its data\backuplabs.jobs.json: where it backs up to and from, and how its last run went.
+    internal class BackupJob { public string Id, Name, LastResult; public DateTime? LastRun; }
+
+    static Dictionary<string, BackupJob> backupsIn = new Dictionary<string, BackupJob>(StringComparer.OrdinalIgnoreCase),
+                                         backedUp = new Dictionary<string, BackupJob>(StringComparer.OrdinalIgnoreCase);
+
+    // The job whose backups this folder holds (its destination), if any.
+    internal static BackupJob BackupsAt(Node n)
+    {
+        if (DateTime.UtcNow - gamesRead > TimeSpan.FromMinutes(2)) LoadGames();
+        BackupJob j;
+        return n != null && backupsIn.Count > 0 && backupsIn.TryGetValue(n.FullPath.TrimEnd('\\'), out j) ? j : null;
+    }
+
+    // The job that backs this folder up (one of its sources), if any.
+    internal static BackupJob BackedUpAt(Node n)
+    {
+        if (DateTime.UtcNow - gamesRead > TimeSpan.FromMinutes(2)) LoadGames();
+        BackupJob j;
+        return n != null && backedUp.Count > 0 && backedUp.TryGetValue(n.FullPath.TrimEnd('\\'), out j) ? j : null;
+    }
+
+    static void LoadBackups()
+    {
+        var into = new Dictionary<string, BackupJob>(StringComparer.OrdinalIgnoreCase);
+        var from = new Dictionary<string, BackupJob>(StringComparer.OrdinalIgnoreCase);
+        object list = null;
+        var data = Exe("backuplabs") != null ? Read(Path.Combine(Path.Combine(Folder, "data"), "backuplabs.jobs.json")) : null;
+        if (data != null) data.TryGetValue("jobs", out list);
+        foreach (var j in ((list as object[]) ?? new object[0]).OfType<Dictionary<string, object>>())
+        {
+            string id = Str(j, "id"), dest = (Str(j, "destination") ?? "").TrimEnd('\\'), last = Str(j, "lastRun");
+            if (string.IsNullOrEmpty(id)) continue;
+            DateTime when;
+            var job = new BackupJob { Id = id, Name = Str(j, "name") ?? id, LastResult = Str(j, "lastResult"),
+                LastRun = last != null && DateTime.TryParse(last, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out when) ? when.ToLocalTime() : (DateTime?)null };
+            if (dest.Length >= 2) into[dest] = job;
+            object sources;
+            if (j.TryGetValue("sources", out sources))
+                foreach (var s in ((sources as object[]) ?? new object[0]).OfType<string>()) if (s.TrimEnd('\\').Length >= 2) from[s.TrimEnd('\\')] = job;
+        }
+        backupsIn = into;
+        backedUp = from;
+    }
+
+    // "today", "yesterday", "3 days ago", or how it went when it didn't
+    internal static string LastBackup(BackupJob j)
+    {
+        if (j.LastResult == "failed") return "last backup failed";
+        if (j.LastRun == null) return "not backed up yet";
+        var days = (DateTime.Today - j.LastRun.Value.Date).Days;
+        return "backed up " + (days <= 0 ? "today" : days == 1 ? "yesterday" : days + " days ago");
+    }
+
     static void LoadGames()
     {
         gamesRead = DateTime.UtcNow;
+        LoadBackups();
         var found = new Dictionary<string, Game>(StringComparer.OrdinalIgnoreCase);
         object list = null;
         var data = Exe("shelf") != null ? Read(Path.Combine(Path.Combine(Folder, "data"), "shelf.games.json")) : null;
@@ -267,8 +322,19 @@ public class Row : INotifyPropertyChanged
     public Thickness Indent { get { return new Thickness(Level * 18, 0, 0, 0); } }
     public string IconData { get { return Node != null ? FolderIcon : File.Summary ? "M0,0" : FileIcon; } }
     public Brush IconBrush { get { return Node != null ? Brand.Accent : Brand.Dimmer; } }
-    public string DisplayName { get { return Node != null ? Node.Name + (Node.Denied ? "   (access denied)" : "") + GameLabel : File.Name; } }
+    public string DisplayName { get { return Node != null ? Node.Name + (Node.Denied ? "   (access denied)" : "") + GameLabel + BackupLabel : File.Name; } }
     string GameLabel { get { var g = Ecosystem.GameAt(Node); return g == null ? "" : string.Equals(g.Name, Node.Name, StringComparison.OrdinalIgnoreCase) ? "   · in Shelf" : "   · " + g.Name + " in Shelf"; } }
+    // Backup Labs: the folder its backups fill, or a folder it backs up
+    string BackupLabel
+    {
+        get
+        {
+            var into = Ecosystem.BackupsAt(Node);
+            if (into != null) return "   · backups of " + into.Name + " (Backup Labs)";
+            var from = Ecosystem.BackedUpAt(Node);
+            return from == null ? "" : "   · " + Ecosystem.LastBackup(from) + " (Backup Labs)";
+        }
+    }
     public Brush NameBrush { get { return Node != null ? (Node.Denied ? Brand.Pink : Brand.Text) : File.Summary ? Brand.Dimmer : Brand.Dim; } }
     public double BarWidth { get { return Math.Max(Size > 0 ? 1 : 0, Fraction * 150); } }
     public Brush BarBrush { get { return Node != null ? Brand.Accent : Brand.Dim; } }
@@ -630,6 +696,8 @@ class MainUI
         foundList.ContextMenu = menu;
         dupList.ContextMenu = menu;
         var shelfItem = menu.Items.OfType<MenuItem>().First(i => (string)i.Tag == "shelfmove");
+        var backupItem = menu.Items.OfType<MenuItem>().First(i => (string)i.Tag == "backuplabs");
+        var backupJobItem = menu.Items.OfType<MenuItem>().First(i => (string)i.Tag == "backuplabsjob");
         ContextMenuEventHandler opening = (s, e) =>
         {
             var tags = MenuTags();
@@ -637,6 +705,12 @@ class MainUI
             foreach (var item in menu.Items.OfType<MenuItem>()) item.IsEnabled = !busy;
             var game = tags.Count == 1 ? Ecosystem.GameAt(tags[0] as Node) : null;
             shelfItem.Visibility = game != null && game.CanMove ? Visibility.Visible : Visibility.Collapsed;
+            // Backup Labs, when it's here: a folder or file it doesn't back up yet can be; one it knows opens its job
+            var node = tags.Count == 1 ? tags[0] as Node : null;
+            var job = node != null ? Ecosystem.BackupsAt(node) ?? Ecosystem.BackedUpAt(node) : null;
+            bool backupLabs = tags.Count == 1 && Ecosystem.Exe("backuplabs") != null && PathOf(tags[0]) != null;
+            backupItem.Visibility = backupLabs && job == null ? Visibility.Visible : Visibility.Collapsed;
+            backupJobItem.Visibility = backupLabs && job != null ? Visibility.Visible : Visibility.Collapsed;
         };
         foreach (var list in new[] { treeList, topList, foundList, dupList }) list.ContextMenuOpening += opening;
 
@@ -903,6 +977,11 @@ class MainUI
         line.Inlines.Add(QuietLink("Shelf", shelf ?? "https://protagonistlabs.app/shelf/?" + utm));
         line.Inlines.Add(shelf != null ? " · names its games' folders here, and moves a game from the row menu"
                                        : " · would name its games' folders here and move a game for you");
+        string backupLabs = Ecosystem.Exe("backuplabs");
+        line = WorksWithLine(panel);
+        line.Inlines.Add(QuietLink("Backup Labs", backupLabs ?? "https://protagonistlabs.app/backuplabs/?" + utm));
+        line.Inlines.Add(backupLabs != null ? " · names its backup folders and what it backs up here, and backs up a folder from the row menu"
+                                            : " · would name your backup folders here and back up a folder from the row menu");
         if (!Ecosystem.BoughtSomething()) return;
         var missing = Ecosystem.PaidApps.Where(a => Ecosystem.Exe(a[0]) == null).Take(4).ToList();
         if (missing.Count == 0) return;
@@ -940,6 +1019,32 @@ class MainUI
         if (game == null || exe == null || game.Id.Contains("\"")) return; // an id can't break out of its quotes
         try { Process.Start(new ProcessStartInfo(exe, "--move \"" + game.Id + "\"")); }
         catch (Exception ex) { Error(ex.Message); }
+    }
+
+    // Backup Labs makes a job of the path and opens on it, waiting for a destination (its card's "back-up" command).
+    void BackUpWithBackupLabs(object tag)
+    {
+        string exe = Ecosystem.Exe("backuplabs"), path = PathOf(tag);
+        if (exe == null || path == null) return;
+        try { Process.Start(new ProcessStartInfo(exe, Arg(path))); }
+        catch (Exception ex) { Error(ex.Message); }
+    }
+
+    // Backup Labs on the job that backs up this folder, or fills it with backups ("show-job").
+    void ShowInBackupLabs(object tag)
+    {
+        var job = Ecosystem.BackupsAt(tag as Node) ?? Ecosystem.BackedUpAt(tag as Node);
+        string exe = Ecosystem.Exe("backuplabs");
+        if (job == null || exe == null) return;
+        try { Process.Start(new ProcessStartInfo(exe, "--show-job " + Arg(job.Id))); }
+        catch (Exception ex) { Error(ex.Message); }
+    }
+
+    // One command-line argument, quoted. A trailing backslash (a drive root, D:\) is doubled, or it would
+    // escape the closing quote; a quote can't be in a path or a job id, so nothing else needs it.
+    static string Arg(string s)
+    {
+        return "\"" + (s.EndsWith("\\") ? s + "\\" : s) + "\"";
     }
 
     void Launch(string what, string argument)
@@ -1530,6 +1635,8 @@ class MainUI
             case "explorer": ShowInExplorer(first); break;
             case "filelabs": OpenInFileLabs(first); break;
             case "shelfmove": MoveWithShelf(first); break;
+            case "backuplabs": BackUpWithBackupLabs(first); break;
+            case "backuplabsjob": ShowInBackupLabs(first); break;
             case "copypath": CopyPath(tags); break;
             case "copy": CopyMove(tags, false); break;
             case "move": CopyMove(tags, true); break;

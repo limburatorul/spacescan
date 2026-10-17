@@ -295,6 +295,8 @@
       <MenuItem Style="{StaticResource MI}" Tag="explorer" Header="Show in Explorer"/>
       <MenuItem Style="{StaticResource MI}" Tag="filelabs" Header="Open in File Labs"/>
       <MenuItem Style="{StaticResource MI}" Tag="shelfmove" Header="Move with Shelf"/>
+      <MenuItem Style="{StaticResource MI}" Tag="backuplabs" Header="Back up with Backup Labs"/>
+      <MenuItem Style="{StaticResource MI}" Tag="backuplabsjob" Header="Show in Backup Labs"/>
       <MenuItem Style="{StaticResource MI}" Tag="copypath" Header="Copy path" InputGestureText="Ctrl+C"/>
       <Separator Style="{StaticResource Sep}"/>
       <MenuItem Style="{StaticResource MI}" Tag="copy" Header="Copy to…"/>
