@@ -107,6 +107,48 @@ $reelGone = & $exeOf 'reel'
 "Shelf games: without Shelf=$noShelf; '$($big.Name)' canMove=$($big.CanMove); '$($stuck.Name)' canMove=$($stuck.CanMove); a drive=$drive; broken file=$broken; trial bought=$trialBought, full bought=$(& $bought); uninstalled Reel=$reelGone"
 if ($noShelf -or $big.Id -ne 'g1' -or -not $big.CanMove -or $stuck.CanMove -or $drive -or $broken -or $trialBought -or -not (& $bought) -or $reelGone) { throw 'ECOSYSTEM MISMATCH' } else { 'ECOSYSTEM OK' }
 
+# Move this game (Shelf): the command line SpaceScan hands Shelf, only for a movable game while Shelf is installed;
+# anything hostile or malformed in shelf.games.json or in Shelf's card is read as "not there".
+$move = { param($path) $n = [Activator]::CreateInstance($asm.GetType('Node')); $n.Name = $path
+    $eco.GetMethod('Forget', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, $null) | Out-Null
+    $eco.GetMethod('MoveCommand', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, [object[]]@($n)) }
+$uuid = '0f8fad5b-d9cb-469f-a165-70867728950e'
+$long = 'x' * 5000
+$hostile = '{"schema":1,"games":[' +
+    '{"id":"' + $uuid + '","name":"Mover","installDir":"' + $jroot + '\\Mover","canMove":true},' +
+    '{"id":"store1","name":"Store","installDir":"' + $jroot + '\\Store","canMove":false},' +
+    '{"id":"str","name":"Str","installDir":"' + $jroot + '\\Str","canMove":"true"},' +
+    '{"id":"a\" --launch \"b","name":"Quote","installDir":"' + $jroot + '\\Quote","canMove":true},' +
+    '{"id":"--launch","name":"Dash","installDir":"' + $jroot + '\\Dash","canMove":true},' +
+    '{"id":42,"name":"Number","installDir":"' + $jroot + '\\Number","canMove":true},' +
+    '{"id":"long","name":"Long","installDir":["' + $jroot + '\\Long"],"canMove":true},' +
+    '{"id":"unc","name":"Unc","installDir":"\\\\host\\share\\Game","canMove":true},' +
+    '{"id":"dev","name":"Dev","installDir":"\\\\?\\' + $jroot + '\\Dev","canMove":true},' +
+    '{"id":"rel","name":"Rel","installDir":"Games\\Rel","canMove":true},' +
+    '{"id":"named","name":"' + $long + '","installDir":"' + $jroot + '\\Named","canMove":true},' +
+    '"just a string", 7, null]}'
+[IO.File]::WriteAllText("$ecoDir\data\shelf.games.json", $hostile, (New-Object Text.UTF8Encoding($true)))   # with a BOM
+$mover = & $move "$root\Mover"
+$refused = @('Store', 'Str', 'Quote', 'Dash', 'Number', 'Long') | Where-Object { & $move "$root\$_" }
+$odd = @('\\host\share\Game', "\\?\$root\Dev", 'Games\Rel') | Where-Object { & $gameAt $_ }
+$named = & $gameAt "$root\Named"
+"Move: $(Split-Path $mover[0] -Leaf) $($mover[1]); handed over for $(@($refused).Count) of 6 bad entries, $(@($odd).Count) of 3 UNC/device/relative folders named; a 5000-char name kept as $($named.Name.Length)"
+if ($mover[1] -ne "--move `"$uuid`"" -or $mover[0] -ne "$PSScriptRoot\SpaceScan.exe" -or $refused -or $odd -or $named.Name.Length -ne 200) { throw 'MOVE MISMATCH' } else { 'MOVE OK' }
+[IO.File]::WriteAllText("$ecoDir\data\shelf.games.json", ($hostile -replace '"schema":1', '"schema":2'), $utf8)
+$schema2 = & $move "$root\Mover"
+[IO.File]::WriteAllText("$ecoDir\data\shelf.games.json", $hostile + (' ' * 16MB), $utf8)
+$huge = & $move "$root\Mover"
+[IO.File]::WriteAllText("$ecoDir\data\shelf.games.json", $hostile, $utf8)
+$shelfCard = [IO.File]::ReadAllText("$ecoDir\apps\shelf.json")
+$cardMove = { param($exe) [IO.File]::WriteAllText("$ecoDir\apps\shelf.json", '{"schema":1,"paid":true,"edition":"full","exe":' + (ConvertTo-Json $exe) + '}', $utf8); & $move "$root\Mover" }
+[IO.File]::WriteAllText("$root\Shelf.bat", '@echo off', $utf8)
+$uncExe = & $cardMove '\\host\share\Shelf.exe'; $devExe = & $cardMove "\\?\$PSScriptRoot\SpaceScan.exe"
+$batExe = & $cardMove "$root\Shelf.bat"; $relExe = & $cardMove 'SpaceScan.exe'; $goneExe = & $cardMove "$root\gone\Shelf.exe"
+[IO.File]::WriteAllText("$ecoDir\apps\shelf.json", $shelfCard, $utf8)
+$back = & $move "$root\Mover"
+"Move refused: schema 2=$($null -eq $schema2), 16 MB file=$($null -eq $huge); Shelf's card exe on \\host=$($null -eq $uncExe), \\?\=$($null -eq $devExe), .bat=$($null -eq $batExe), relative=$($null -eq $relExe), gone=$($null -eq $goneExe); good card again=$($null -ne $back)"
+if ($schema2 -or $huge -or $uncExe -or $devExe -or $batExe -or $relExe -or $goneExe -or -not $back) { throw 'MOVE INPUT MISMATCH' } else { 'MOVE INPUT OK' }
+
 # Backup Labs: its backup folders and the folders it backs up are named, only while it is installed. The file is
 # shaped as Backup Labs writes it (Ecosystem.JobsJson there: camelCase, UTC times, lastResult ok/failed/cancelled).
 $node = { param($path) $n = [Activator]::CreateInstance($asm.GetType('Node')); $n.Name = $path

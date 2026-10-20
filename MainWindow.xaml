@@ -294,7 +294,7 @@
       <MenuItem Style="{StaticResource MI}" Tag="open" Header="Open" InputGestureText="Enter"/>
       <MenuItem Style="{StaticResource MI}" Tag="explorer" Header="Show in Explorer"/>
       <MenuItem Style="{StaticResource MI}" Tag="filelabs" Header="Open in File Labs"/>
-      <MenuItem Style="{StaticResource MI}" Tag="shelfmove" Header="Move with Shelf"/>
+      <MenuItem Style="{StaticResource MI}" Tag="shelfmove" Header="Move this game to another drive (Shelf)"/>
       <MenuItem Style="{StaticResource MI}" Tag="backuplabs" Header="Back up with Backup Labs"/>
       <MenuItem Style="{StaticResource MI}" Tag="backuplabsjob" Header="Show in Backup Labs"/>
       <MenuItem Style="{StaticResource MI}" Tag="copypath" Header="Copy path" InputGestureText="Ctrl+C"/>

@@ -22,6 +22,9 @@ Table directly, so a whole drive — including a 10 TB one — is mapped in seco
   dialogs you already know.
 - **Export** to HTML or CSV, and a **command line** for scheduled reports.
 - **Exclusions** by name, extension or path, kept between runs.
+- **Works with Shelf and Backup Labs** when they are installed: a game's folder is labelled with the
+  game, and a game Shelf can move has "Move this game to another drive (Shelf)" in its row menu, which
+  opens Shelf's own move; Backup Labs' folders are labelled too, and a folder can be backed up from there.
 
 ## Command line
 

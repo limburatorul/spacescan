@@ -25,12 +25,12 @@ using WinForms = System.Windows.Forms;
 [assembly: System.Reflection.AssemblyProduct("SpaceScan")]
 [assembly: System.Reflection.AssemblyCompany("Protagonist Labs")]
 [assembly: System.Reflection.AssemblyCopyright("MIT licence")]
-[assembly: System.Reflection.AssemblyVersion("1.3.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.3.0")]
+[assembly: System.Reflection.AssemblyVersion("1.3.1")]
+[assembly: System.Reflection.AssemblyFileVersion("1.3.1")]
 
 // The folder the Protagonist Labs apps share on this PC (%APPDATA%\ProtagonistLabs): each app writes its card in
 // apps\, and what it offers the others in data\. SpaceScan writes its card, and reads Shelf's games, to name their
-// install folders and offer "Move with Shelf", and the other cards, for Settings → Integration. Anything read
+// install folders and offer to move a game with Shelf, and the other cards, for Settings → Integration. Anything read
 // from here may be missing or broken: that just means "not there".
 static class Ecosystem
 {
@@ -68,12 +68,13 @@ static class Ecosystem
         return b.Append('"').ToString();
     }
 
-    // A shared file as JSON, or null unless it's a schema-1 object.
+    // A shared file as JSON, or null unless it's a schema-1 object. ReadAllText skips a BOM; past 16 MB it is no
+    // file an app wrote (Shelf's games file is about 1 KB a game) and isn't read.
     static Dictionary<string, object> Read(string path)
     {
         try
         {
-            if (!File.Exists(path)) return null;
+            if (!File.Exists(path) || new FileInfo(path).Length > 16 << 20) return null;
             var o = new JavaScriptSerializer { MaxJsonLength = int.MaxValue }.DeserializeObject(File.ReadAllText(path)) as Dictionary<string, object>;
             object schema;
             return o != null && o.TryGetValue("schema", out schema) && Equals(schema, 1) ? o : null;
@@ -88,10 +89,22 @@ static class Ecosystem
     }
 
     // An app's exe from its card, or null when it isn't installed (no card, a broken one, or its exe is gone).
+    // Only an .exe on a local drive: anything can write a card, and File.Exists on \\host\share or a mapped
+    // network drive would reach that host before anything is decided.
     internal static string Exe(string id)
     {
         string exe = Str(Read(Path.Combine(Path.Combine(Folder, "apps"), id + ".json")), "exe");
-        return exe != null && File.Exists(exe) ? exe : null;
+        return Local(exe) && exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && File.Exists(exe) ? exe : null;
+    }
+
+    // X:\... on a drive that isn't a network one. Never \\host, \\?\ or \\.\ device paths, nor relative ones.
+    // Decided from the string and the drive table alone, without touching the path.
+    internal static bool Local(string path)
+    {
+        if (path == null || path.Length < 3 || path.Length > 1024 || !char.IsLetter(path[0]) || path[1] != ':' || path[2] != '\\'
+            || path.IndexOfAny(Path.GetInvalidPathChars()) >= 0 || path.IndexOf(':', 2) >= 0) return false;
+        try { return new DriveInfo(path.Substring(0, 1)).DriveType != DriveType.Network; }
+        catch (ArgumentException) { return false; } // a letter that isn't A-Z
     }
 
     // Someone bought a Protagonist Labs app here: the discount line may be shown.
@@ -182,16 +195,27 @@ static class Ecosystem
         if (data != null) data.TryGetValue("games", out list);
         foreach (var g in ((list as object[]) ?? new object[0]).OfType<Dictionary<string, object>>())
         {
-            string dir = (Str(g, "installDir") ?? "").TrimEnd('\\'), id = Str(g, "id");
+            string dir = (Str(g, "installDir") ?? "").TrimEnd('\\'), id = Str(g, "id"), name = Str(g, "name");
             object canMove;
-            if (dir.Length < 3 || string.IsNullOrEmpty(id)) continue; // never a whole drive
-            found[dir] = new Game { Id = id, Name = Str(g, "name") ?? id, CanMove = g.TryGetValue("canMove", out canMove) && Equals(canMove, true) };
+            // Never a whole drive. Ids are Shelf's UUIDs, and one goes on Shelf's command line.
+            if (dir.Length < 3 || !Local(dir) || id == null || !System.Text.RegularExpressions.Regex.IsMatch(id, @"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")) continue;
+            if (string.IsNullOrWhiteSpace(name)) name = id; else if (name.Length > 200) name = name.Substring(0, 200);
+            found[dir] = new Game { Id = id, Name = name, CanMove = g.TryGetValue("canMove", out canMove) && Equals(canMove, true) };
         }
         games = found;
     }
 
     // The next lookup reads the files again.
     internal static void Forget() { gamesRead = DateTime.MinValue; }
+
+    // Shelf's "move-game" command for the game installed in this folder, as { exe, arguments }; null when Shelf
+    // isn't installed or won't move this game (a store game is its store's to move).
+    internal static string[] MoveCommand(Node n)
+    {
+        var game = GameAt(n);
+        string exe = game != null && game.CanMove ? Exe("shelf") : null;
+        return exe == null ? null : new[] { exe, "--move \"" + game.Id + "\"" };
+    }
 }
 
 // Self-update, the way Sysoptimizer does it: GitHub's latest release, its *setup.exe checked against the size and
@@ -703,8 +727,7 @@ class MainUI
             var tags = MenuTags();
             if (tags.Count == 0) { e.Handled = true; return; }
             foreach (var item in menu.Items.OfType<MenuItem>()) item.IsEnabled = !busy;
-            var game = tags.Count == 1 ? Ecosystem.GameAt(tags[0] as Node) : null;
-            shelfItem.Visibility = game != null && game.CanMove ? Visibility.Visible : Visibility.Collapsed;
+            shelfItem.Visibility = tags.Count == 1 && Ecosystem.MoveCommand(tags[0] as Node) != null ? Visibility.Visible : Visibility.Collapsed;
             // Backup Labs, when it's here: a folder or file it doesn't back up yet can be; one it knows opens its job
             var node = tags.Count == 1 ? tags[0] as Node : null;
             var job = node != null ? Ecosystem.BackupsAt(node) ?? Ecosystem.BackedUpAt(node) : null;
@@ -975,7 +998,7 @@ class MainUI
         string shelf = Ecosystem.Exe("shelf");
         var line = WorksWithLine(panel);
         line.Inlines.Add(QuietLink("Shelf", shelf ?? "https://protagonistlabs.app/shelf/?" + utm));
-        line.Inlines.Add(shelf != null ? " · names its games' folders here, and moves a game from the row menu"
+        line.Inlines.Add(shelf != null ? " · names its games' folders here, and moves a game to another drive from the row menu"
                                        : " · would name its games' folders here and move a game for you");
         string backupLabs = Ecosystem.Exe("backuplabs");
         line = WorksWithLine(panel);
@@ -1011,14 +1034,15 @@ class MainUI
         return link;
     }
 
-    // Shelf's own move dialog for the game in this folder: Shelf moves it and keeps its library right.
+    // Shelf's own move dialog for the game in this folder: Shelf moves it and keeps its library right. Its games
+    // file is read again at the next lookup, so the label follows once Shelf has written the game's new place.
     void MoveWithShelf(object tag)
     {
-        var game = Ecosystem.GameAt(tag as Node);
-        string exe = Ecosystem.Exe("shelf");
-        if (game == null || exe == null || game.Id.Contains("\"")) return; // an id can't break out of its quotes
-        try { Process.Start(new ProcessStartInfo(exe, "--move \"" + game.Id + "\"")); }
+        var command = Ecosystem.MoveCommand(tag as Node);
+        if (command == null) return;
+        try { Process.Start(new ProcessStartInfo(command[0], command[1])); }
         catch (Exception ex) { Error(ex.Message); }
+        Ecosystem.Forget();
     }
 
     // Backup Labs makes a job of the path and opens on it, waiting for a destination (its card's "back-up" command).
