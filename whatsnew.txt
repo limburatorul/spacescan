@@ -1,0 +1,46 @@
+# What's new in SpaceScan, newest first. Built into the exe (build.cmd, WhatsNew.cs).
+# "## version | yyyy-MM-dd | title", then the release's lines: "**Heading**", "- point", or a plain paragraph.
+
+## 1.4.0 | 2026-10-23 | One home for the program, one for its data
+SpaceScan moves in with the other Protagonist Labs apps: the program to Program Files, its settings and scan history next to every other app's data. Nothing to do on your side, and nothing of yours is left behind.
+**Where things live now**
+- The program is in **C:\Program Files\ProtagonistLabs\SpaceScan**, for everyone on this PC. Installing and updating ask Windows for permission once; say no and the version you have keeps running.
+- Your exclusion rules and every stored scan move by themselves to **%APPDATA%\ProtagonistLabs\SpaceScan**. It's a rename, so even a big history moves in no time, and two folders are never mixed.
+- The old installation in your user folder is removed, along with its shortcuts. **Scan with SpaceScan** in Explorer and in File Labs keeps working from the new place.
+**Also**
+- **Open in File Labs** finds File Labs wherever it is installed now, for you or for everyone on the PC.
+- What's new looks like this now: every release by month, built into the app, so it opens offline too. It comes up once after an update, and any time from Settings.
+
+## 1.3.1 | 2026-10-20 | Move a game with Shelf
+- The row menu item is now **Move this game to another drive (Shelf)**, so it says what it does.
+- It appears only for a game folder Shelf itself can move, and only while Shelf is installed.
+- After the move, the folder's "in Shelf" label follows the game as soon as Shelf has saved its new place.
+
+## 1.3.0 | 2026-10-17 | Works with Backup Labs
+- When Backup Labs is installed, the folder its backups go to is named **backups of <job>**, and a folder it backs up says when it was last backed up, or that the last backup failed.
+- The row menu gets **Back up with Backup Labs** for a folder or file it doesn't back up yet, and **Show in Backup Labs** for one it already knows.
+
+## 1.2.3 | 2026-10-16 | The whole MFT, every time
+- Fixed: on a drive whose Master File Table is in many pieces (common on big, busy disks), the fast scan read only part of it. It now reads the whole table, still in about a second.
+- If the table can't be read completely, SpaceScan scans folder by folder instead of showing a wrong result, and says why.
+
+## 1.2.2 | 2026-10-16 | How each drive was read
+- Scan all local drives says how each drive was read (MFT or folder by folder) and, when the fast read fails, why.
+- A whole drive that comes back empty while Windows reports it in use now gets a warning instead of a silent 0 B.
+
+## 1.2.1 | 2026-10-16 | Hourly update checks
+- SpaceScan looks for a new version every hour while it's open.
+- If Check for updates can't reach GitHub, it says so instead of "no update found".
+
+## 1.2.0 | 2026-10-15 | Updates itself
+- SpaceScan tells you when a new version is out and installs it for you: one question, then it closes, updates and opens again.
+
+## 1.1.0 | 2026-10-15 | Works with Shelf
+- With Shelf installed, your games' install folders are marked **in Shelf** in the tree, and the row menu can move a game through Shelf.
+- Settings → Integration → Works with lists the other Protagonist Labs apps that add something here.
+
+## 1.0.0 | 2026-09-29 | The first release
+- Finds what fills a Windows drive. On NTFS it reads the Master File Table directly, so even a 10 TB drive is mapped in seconds.
+- Folder tree with size bars, file types and categories, the largest files, and search by name, size or age.
+- Duplicate finder with the space you would get back, and compare a scan with an earlier one.
+- Delete, copy and move from the results, HTML and CSV export, exclusion rules, and a command line for scheduled reports.

@@ -25,8 +25,8 @@ using WinForms = System.Windows.Forms;
 [assembly: System.Reflection.AssemblyProduct("SpaceScan")]
 [assembly: System.Reflection.AssemblyCompany("Protagonist Labs")]
 [assembly: System.Reflection.AssemblyCopyright("MIT licence")]
-[assembly: System.Reflection.AssemblyVersion("1.3.1")]
-[assembly: System.Reflection.AssemblyFileVersion("1.3.1")]
+[assembly: System.Reflection.AssemblyVersion("1.4.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.4.0")]
 
 // The folder the Protagonist Labs apps share on this PC (%APPDATA%\ProtagonistLabs): each app writes its card in
 // apps\, and what it offers the others in data\. SpaceScan writes its card, and reads Shelf's games, to name their
@@ -34,7 +34,11 @@ using WinForms = System.Windows.Forms;
 // from here may be missing or broken: that just means "not there".
 static class Ecosystem
 {
-    internal static string Folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ProtagonistLabs");
+    // Test only: SPACESCAN_TEST_ROOT stands in for %APPDATA% (the shared folder, SpaceScan's data and the one it moves
+    // from) and keeps the copy out of the registry, so a UI check never touches the user's own SpaceScan.
+    internal static readonly string TestRoot = Environment.GetEnvironmentVariable("SPACESCAN_TEST_ROOT");
+    internal static readonly string AppData = string.IsNullOrEmpty(TestRoot) ? Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) : TestRoot;
+    internal static string Folder = Path.Combine(AppData, "ProtagonistLabs");
     internal static readonly string[][] PaidApps = { new[] { "shelf", "Shelf" }, new[] { "stash", "Stash" }, new[] { "frostpane", "Frostpane" }, new[] { "reel", "Reel" }, new[] { "planner", "Planner" }, new[] { "reminder", "Reminder" } };
 
     internal class Game { public string Id, Name; public bool CanMove; }
@@ -216,11 +220,61 @@ static class Ecosystem
         string exe = game != null && game.CanMove ? Exe("shelf") : null;
         return exe == null ? null : new[] { exe, "--move \"" + game.Id + "\"" };
     }
+
+    // SpaceScan's own exclusions and scan history: %APPDATA%\ProtagonistLabs\SpaceScan since 1.4.0, with every studio
+    // app's data. Main sets it from MoveData before anything is read, so loading the exe (check.ps1) moves nothing.
+    internal static string Data = Path.Combine(Folder, "SpaceScan");
+
+    // The old folder (%APPDATA%\SpaceScan) moved to the new one once, the same rule as the installer's [Code]: a rename,
+    // never a copy, so it is instant and never half done. A new folder that already holds something is never mixed
+    // with the old one (the old stays, move.log says so); a failed rename (a file held open) means this session uses
+    // the old folder and the next start tries again. Returns the folder to use.
+    internal static string MoveData(string old, string now)
+    {
+        if (!Directory.Exists(old)) return now;
+        try
+        {
+            if (Directory.Exists(now))
+            {
+                if (Directory.EnumerateFileSystemEntries(now).Any())
+                {
+                    File.AppendAllText(Path.Combine(now, "move.log"), DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + old + " was left where it is: " + now + " already holds data\r\n");
+                    return now;
+                }
+                Directory.Delete(now);
+            }
+            Directory.CreateDirectory(Path.GetDirectoryName(now));
+            Directory.Move(old, now);
+            return now;
+        }
+        catch (IOException) { return old; }
+        catch (UnauthorizedAccessException) { return old; }
+    }
+
+    // An installed app's exe from its uninstall entry (DisplayIcon): per machine first, in both registry views, then
+    // for this user. The studio's apps install per machine now; their older versions did per user.
+    internal static string Uninstalled(string key)
+    {
+        var places = new[] { Tuple.Create(RegistryHive.LocalMachine, RegistryView.Registry64), Tuple.Create(RegistryHive.LocalMachine, RegistryView.Registry32), Tuple.Create(RegistryHive.CurrentUser, RegistryView.Default) };
+        foreach (var place in places)
+            try
+            {
+                using (var root = RegistryKey.OpenBaseKey(place.Item1, place.Item2))
+                using (var k = root.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\" + key))
+                {
+                    string icon = k == null ? null : k.GetValue("DisplayIcon") as string;
+                    string exe = icon == null ? null : icon.Split(',')[0].Trim('"');
+                    if (Local(exe) && exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && File.Exists(exe)) return exe;
+                }
+            }
+            catch (Exception) { } // unreadable: not this place
+        return null;
+    }
 }
 
 // Self-update, the way Sysoptimizer does it: GitHub's latest release, its *setup.exe checked against the size and
-// SHA-256 GitHub published for it, then a detached one-shot .cmd that waits for this process to end, runs the
-// installer silently and starts SpaceScan again. Nothing in this process can outlive the installer replacing it.
+// SHA-256 GitHub published for it, then the installer started elevated (UAC), which closes SpaceScan, installs
+// silently and starts it again.
 static class Updater
 {
     const string Repo = "limburatorul/spacescan";
@@ -289,20 +343,12 @@ static class Updater
         return path;
     }
 
-    /// <summary>Hands off to a detached script; the caller then closes so the installer can replace the exe.</summary>
-    internal static void InstallAndRestart(string installer, string exe)
+    /// <summary>Starts the installer through the shell, elevated: SpaceScan installs per machine since 1.4.0. The
+    /// installer stops this process and starts the new version when it is done (its [Run] entry for a silent install);
+    /// the caller closes right after. Throws Win32Exception when the user says no to UAC: nothing changed then.</summary>
+    internal static void Install(string installer)
     {
-        int pid = Process.GetCurrentProcess().Id;
-        string script = Path.Combine(Path.GetTempPath(), "spacescan-update-" + pid + ".cmd");
-        File.WriteAllText(script, string.Join("\r\n", new[] {
-            "@echo off",
-            ":wait",
-            "tasklist /FI \"PID eq " + pid + "\" | find \"" + pid + "\" >nul && (timeout /t 1 /nobreak >nul & goto wait)",
-            "\"" + installer + "\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART",
-            "start \"\" \"" + exe + "\"",
-            "del \"%~f0\""
-        }) + "\r\n");
-        Process.Start(new ProcessStartInfo("cmd.exe", "/c \"" + script + "\"") { CreateNoWindow = true, UseShellExecute = false });
+        Process.Start(new ProcessStartInfo(installer, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART") { UseShellExecute = true, Verb = "runas" });
     }
 }
 
@@ -676,6 +722,8 @@ class MainUI
         updates.Start();
         Find<TextBlock>("updateText").Text = "SpaceScan " + Updater.Current;
         Find<Button>("updateBtn").Click += delegate { CheckForUpdates(true); };
+        Find<Button>("whatsNewBtn").Click += delegate { excludePopup.IsOpen = false; WhatsNew.Open(Window); };
+        Window.ContentRendered += delegate { WhatsNew.OpenOnceAfterUpdate(Window); }; // an owner must have been shown
         Find<Button>("findBtn").Click += delegate { RunSearch(); };
         Find<Button>("dupBtn").Click += delegate { RunDupes(); };
         foreach (var box in new[] { findName, findSize, findAge })
@@ -799,7 +847,7 @@ class MainUI
         Window.Background = glass ? Brushes.Transparent : Brand.Ground;
     }
 
-    static int Dwm(IntPtr h, int attr, int value) { return DwmSetWindowAttribute(h, attr, ref value, 4); }
+    internal static int Dwm(IntPtr h, int attr, int value) { return DwmSetWindowAttribute(h, attr, ref value, 4); }
 
     void Error(string msg) { MessageBox.Show(Window, msg, "SpaceScan", MessageBoxButton.OK, MessageBoxImage.Error); }
 
@@ -865,22 +913,22 @@ class MainUI
 
     const string FileLabsPage = "https://protagonistlabs.app/filelabs/?utm_source=spacescan&utm_medium=app&utm_campaign=open-in-filelabs";
 
+    // File Labs' card, else its uninstall entry (its installer's AppId never changes), per machine or per user
     static string FileLabsExe
     {
-        get
-        {
-            string p = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "File Labs", "FileLabs.exe");
-            return File.Exists(p) ? p : null;
-        }
+        get { return Ecosystem.Exe("filelabs") ?? Ecosystem.Uninstalled("{7E4C2B9A-3F1D-4C8E-9A6B-51D0C2E8F4A7}_is1"); }
     }
 
-    // Publishes where we live, so File Labs (or anything else) can offer "Scan with SpaceScan".
+    // Publishes where we live, so File Labs (or anything else) can offer "Scan with SpaceScan"; and when the Explorer
+    // menu is on, points it here too (the exe moved to Program Files in 1.4.0).
     static void RegisterSelf()
     {
+        if (Ecosystem.TestRoot != null) return; // a test copy must not repoint the user's own SpaceScan
         try
         {
             using (var k = Registry.CurrentUser.CreateSubKey(@"Software\SpaceScan"))
                 if (k != null) k.SetValue("ExePath", ExePath);
+            if (ShellMenuInstalled) WriteShellMenu(true);
         }
         catch (Exception) { }
     }
@@ -899,21 +947,23 @@ class MainUI
 
     void SetShellMenu(bool on)
     {
-        try
-        {
-            foreach (var key in ShellKeys)
-            {
-                if (!on) { Registry.CurrentUser.DeleteSubKeyTree(key, false); continue; }
-                using (var k = Registry.CurrentUser.CreateSubKey(key))
-                {
-                    k.SetValue("", "Scan with SpaceScan");
-                    k.SetValue("Icon", ExePath);
-                }
-                using (var c = Registry.CurrentUser.CreateSubKey(key + @"\command"))
-                    c.SetValue("", "\"" + ExePath + "\" \"" + (key.Contains("Background") ? "%V" : "%1") + "\"");
-            }
-        }
+        try { WriteShellMenu(on); }
         catch (Exception ex) { Error(ex.Message); }
+    }
+
+    static void WriteShellMenu(bool on)
+    {
+        foreach (var key in ShellKeys)
+        {
+            if (!on) { Registry.CurrentUser.DeleteSubKeyTree(key, false); continue; }
+            using (var k = Registry.CurrentUser.CreateSubKey(key))
+            {
+                k.SetValue("", "Scan with SpaceScan");
+                k.SetValue("Icon", ExePath);
+            }
+            using (var c = Registry.CurrentUser.CreateSubKey(key + @"\command"))
+                c.SetValue("", "\"" + ExePath + "\" \"" + (key.Contains("Background") ? "%V" : "%1") + "\"");
+        }
     }
 
     string dismissedTag; // the release the user said No to: not asked again this session, unless they check by hand
@@ -941,7 +991,7 @@ class MainUI
                 text.Text = manual && failed ? Updater.CheckFailed
                     : "SpaceScan " + Updater.Current + (manual && release == null ? " — no update found" : "");
                 if (release == null || (!manual && release.Tag == dismissedTag)) return;
-                if (MessageBox.Show(Window, "SpaceScan " + release.Version + " is out (you have " + Updater.Current + ").\n\nInstall it now? SpaceScan will close, update and open again.",
+                if (MessageBox.Show(Window, "SpaceScan " + release.Version + " is out (you have " + Updater.Current + ").\n\nInstall it now? Windows will ask for permission, then SpaceScan closes, updates and opens again.",
                         "SpaceScan update", MessageBoxButton.YesNo, MessageBoxImage.Information) != MessageBoxResult.Yes)
                 {
                     dismissedTag = release.Tag;
@@ -970,7 +1020,8 @@ class MainUI
                 checking = false;
                 status.Text = "";
                 if (error != null) { Error("The update couldn't be installed: " + error); return; }
-                Updater.InstallAndRestart(installer, ExePath);
+                try { Updater.Install(installer); }
+                catch (Win32Exception) { status.Text = "Update not installed."; return; } // "No" on the UAC prompt: this version goes on
                 Window.Close();
             });
         });
@@ -1092,7 +1143,7 @@ class MainUI
 
     static string ExcludeFile
     {
-        get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SpaceScan", "exclude.txt"); }
+        get { return Path.Combine(Ecosystem.Data, "exclude.txt"); }
     }
 
     void LoadExclusions()
@@ -1984,6 +2035,8 @@ class MainUI
     {
         // A bare path (Explorer's or File Labs' "Scan with SpaceScan") opens the window on it;
         // anything with options runs headless and writes files.
+        // Before either reads a setting or the history: the data folder moves in with the other studio apps, once.
+        Ecosystem.Data = Ecosystem.MoveData(Path.Combine(Ecosystem.AppData, "SpaceScan"), Ecosystem.Data);
         if (args.Any(a => a.StartsWith("-"))) return Cli.Run(args);
         if (args.Length > 0) startPath = args[0];
         AppDomain.CurrentDomain.UnhandledException += (s, e) => ShowCrash(e.ExceptionObject);

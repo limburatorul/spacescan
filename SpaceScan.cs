@@ -862,7 +862,7 @@ static class History
 
     public static string Dir
     {
-        get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SpaceScan", "history"); }
+        get { return Path.Combine(Ecosystem.Data, "history"); }
     }
 
     static string Key(string rootPath)

@@ -4,4 +4,5 @@ set FW=%WINDIR%\Microsoft.NET\Framework64\v4.0.30319
  /lib:%FW%\WPF /r:PresentationFramework.dll /r:PresentationCore.dll /r:WindowsBase.dll /r:System.Xaml.dll ^
  /r:System.Windows.Forms.dll /r:Microsoft.VisualBasic.dll /r:System.Web.Extensions.dll ^
  /resource:"%~dp0MainWindow.xaml",MainWindow.xaml ^
- /out:"%~dp0SpaceScan.exe" "%~dp0SpaceScan.cs" "%~dp0App.cs"
+ /resource:"%~dp0whatsnew.txt",whatsnew.txt /resource:"%~dp0WhatsNew\1.4.jpg",WhatsNew.1.4.jpg ^
+ /out:"%~dp0SpaceScan.exe" "%~dp0SpaceScan.cs" "%~dp0App.cs" "%~dp0WhatsNew.cs"

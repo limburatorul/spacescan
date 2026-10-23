@@ -195,6 +195,34 @@ $nothing = $newer.Invoke($null, $null)
 "Update check fails: offline=$offline 403=$limited 502=$busy garbage=$garbage; nothing newer=$($nothing -eq $null)"
 if (-not ($offline -and $limited -and $busy -and $garbage) -or $nothing -ne $null) { throw 'UPDATE CHECK MISMATCH' } else { 'UPDATE CHECK OK' }
 
+# 1.4.0: the data folder moves into %APPDATA%\ProtagonistLabs\SpaceScan once, by a rename, never into a folder that
+# holds data; a file held open leaves it for the next start. Synthetic folders only (MoveData takes both paths).
+$moveData = { param($old, $new) $eco.GetMethod('MoveData', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, [object[]]@($old, $new)) }
+$old = "$root\roaming\SpaceScan"; $new = "$root\roaming\ProtagonistLabs\SpaceScan"
+function Put($dir, $n) { [IO.Directory]::CreateDirectory("$dir\history") | Out-Null; [IO.File]::WriteAllBytes("$dir\history\a.scan", (New-Object byte[] $n)) }
+Put $old 10
+$moved = (& $moveData $old $new) -eq $new -and -not (Test-Path $old) -and (Get-Item "$new\history\a.scan").Length -eq 10
+$again = (& $moveData $old $new) -eq $new -and (Get-Item "$new\history\a.scan").Length -eq 10
+Put $old 20
+$kept = (& $moveData $old $new) -eq $new -and (Get-Item "$old\history\a.scan").Length -eq 20 -and (Get-Item "$new\history\a.scan").Length -eq 10 -and (Get-Content "$new\move.log" -Raw) -match 'left where it is'
+Remove-Item $new -Recurse -Force; [IO.Directory]::CreateDirectory($new) | Out-Null
+$empty = (& $moveData $old $new) -eq $new -and -not (Test-Path $old) -and (Get-Item "$new\history\a.scan").Length -eq 20
+Remove-Item $new -Recurse -Force; Put $old 30
+$held = [IO.File]::Open("$old\history\a.scan", 'Open', 'Read', 'None')
+$locked = (& $moveData $old $new) -eq $old -and (Test-Path "$old\history\a.scan") -and -not (Test-Path "$new\history")
+$held.Close()
+$retry = (& $moveData $old $new) -eq $new -and -not (Test-Path $old)
+"Data move: moved=$moved again=$again both-hold-data-kept-apart=$kept empty-new-taken=$empty locked-uses-old=$locked next-start=$retry"
+if (-not ($moved -and $again -and $kept -and $empty -and $locked -and $retry)) { throw 'DATA MOVE MISMATCH' } else { 'DATA MOVE OK' }
+
+# Sisters by uninstall entry (File Labs): nothing for a key no installer wrote. What's new: built in, every release
+# readable, the newest one the version being built.
+$noApp = $eco.GetMethod('Uninstalled', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, [object[]]@('{00000000-0000-0000-0000-000000000000}_is1'))
+$notes = $asm.GetType('WhatsNew').GetMethod('Load', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, $null)
+$version = [Diagnostics.FileVersionInfo]::GetVersionInfo("$PSScriptRoot\SpaceScan.exe").FileVersion
+"What's new: $($notes.Count) releases, newest $($notes[0].Version) ($($notes[0].Lines.Count) lines), exe $version; unknown uninstall key=$($null -eq $noApp)"
+if ($noApp -or $notes.Count -lt 9 -or $notes[0].Version -ne $version -or ($notes | Where-Object { $_.Lines.Count -eq 0 -or -not $_.Title })) { throw 'WHATS NEW MISMATCH' } else { 'WHATS NEW OK' }
+
 cmd /c rd /s /q "\\?\$root"
 
 # MFT path (admin only): C:\Windows totals from the MFT must match the classic walk within 2%.
