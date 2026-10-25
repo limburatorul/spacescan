@@ -216,12 +216,13 @@ $retry = (& $moveData $old $new) -eq $new -and -not (Test-Path $old)
 if (-not ($moved -and $again -and $kept -and $empty -and $locked -and $retry)) { throw 'DATA MOVE MISMATCH' } else { 'DATA MOVE OK' }
 
 # Sisters by uninstall entry (File Labs): nothing for a key no installer wrote. What's new: built in, every release
-# readable, the newest one the version being built.
+# readable, the newest one the version being built, each with its picture or its month's.
 $noApp = $eco.GetMethod('Uninstalled', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, [object[]]@('{00000000-0000-0000-0000-000000000000}_is1'))
 $notes = $asm.GetType('WhatsNew').GetMethod('Load', [Reflection.BindingFlags]'Static,NonPublic').Invoke($null, $null)
+$picture = $asm.GetType('WhatsNew').GetMethod('Picture', [Reflection.BindingFlags]'Static,NonPublic')
 $version = [Diagnostics.FileVersionInfo]::GetVersionInfo("$PSScriptRoot\SpaceScan.exe").FileVersion
 "What's new: $($notes.Count) releases, newest $($notes[0].Version) ($($notes[0].Lines.Count) lines), exe $version; unknown uninstall key=$($null -eq $noApp)"
-if ($noApp -or $notes.Count -lt 9 -or $notes[0].Version -ne $version -or ($notes | Where-Object { $_.Lines.Count -eq 0 -or -not $_.Title })) { throw 'WHATS NEW MISMATCH' } else { 'WHATS NEW OK' }
+if ($noApp -or $notes.Count -lt 9 -or $notes[0].Version -ne $version -or ($notes | Where-Object { $_.Lines.Count -eq 0 -or -not $_.Title -or -not $picture.Invoke($null, [object[]]@($_.psobject.BaseObject)) })) { throw 'WHATS NEW MISMATCH' } else { 'WHATS NEW OK' }
 
 cmd /c rd /s /q "\\?\$root"
 

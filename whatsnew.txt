@@ -1,6 +1,10 @@
 # What's new in SpaceScan, newest first. Built into the exe (build.cmd, WhatsNew.cs).
 # "## version | yyyy-MM-dd | title", then the release's lines: "**Heading**", "- point", or a plain paragraph.
 
+## 1.4.1 | 2026-10-25 | A new icon
+- **A new icon**, brighter and easier to spot in the taskbar.
+- What's new now shows a picture for each release.
+
 ## 1.4.0 | 2026-10-23 | One home for the program, one for its data
 SpaceScan moves in with the other Protagonist Labs apps: the program to Program Files, its settings and scan history next to every other app's data. Nothing to do on your side, and nothing of yours is left behind.
 **Where things live now**

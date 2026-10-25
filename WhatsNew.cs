@@ -9,12 +9,11 @@ using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using Ellipse = System.Windows.Shapes.Ellipse;
 
 // What's new, as the studio's other apps show it: every release in a list on the left, under the month it came out,
 // and the chosen one on the right under its 960 x 170 banner. The notes are whatsnew.txt, built into the exe (build.cmd),
 // so it works offline and shows every release. A release with a picture of its own (WhatsNew\x.y.jpg, built in) shows
-// it; the others get SpaceScan's colours and its rings. C# 5 (csc from the .NET Framework), so no newer syntax here.
+// it; the others show the picture of the month they came out (WhatsNew\mMM.jpg). C# 5 (csc from the .NET Framework), so no newer syntax here.
 class WhatsNew
 {
     internal class Release { public string Version, Title; public DateTime Date; public List<string> Lines = new List<string>(); }
@@ -189,54 +188,25 @@ class WhatsNew
         return t;
     }
 
-    // The release's picture (WhatsNew.x.y.jpg, built in), or SpaceScan's colours under its version and title.
-    static UIElement Banner(Release r)
+    // The release's picture (WhatsNew.x.y.jpg, built in), or the one of the month it came out (WhatsNew.mMM.jpg).
+    internal static Stream Picture(Release r)
     {
         string minor = string.Join(".", r.Version.Split('.').Take(2));
-        using (var stream = typeof(WhatsNew).Assembly.GetManifestResourceStream("WhatsNew." + minor + ".jpg"))
-            if (stream != null)
-            {
-                var picture = new BitmapImage();
-                picture.BeginInit();
-                picture.CacheOption = BitmapCacheOption.OnLoad;
-                picture.StreamSource = stream;
-                picture.EndInit();
-                picture.Freeze();
-                return new Image { Source = picture, Width = 960, Height = 170, Stretch = Stretch.UniformToFill };
-            }
+        return typeof(WhatsNew).Assembly.GetManifestResourceStream("WhatsNew." + minor + ".jpg")
+            ?? typeof(WhatsNew).Assembly.GetManifestResourceStream("WhatsNew.m" + r.Date.ToString("MM") + ".jpg");
+    }
 
-        // night blue, the accent #4c8dff and cyan #5ee6ff: two rings of a drive's folders, cut differently per release
-        var art = new Canvas { Width = 960, Height = 170, ClipToBounds = true };
-        var glow = new Ellipse { Width = 560, Height = 380, Fill = new RadialGradientBrush(Color.FromArgb(0x50, 0x4C, 0x8D, 0xFF), Color.FromArgb(0, 0x4C, 0x8D, 0xFF)) };
-        Canvas.SetLeft(glow, 520); Canvas.SetTop(glow, -150);
-        art.Children.Add(glow);
-        var v = r.Version.Split('.').Select(int.Parse).ToArray();
-        var rnd = new Random(v[0] * 10000 + v[1] * 100 + v[2]);
-        foreach (var ring in new[] { new[] { 64.0, 16 }, new[] { 40.0, 10 } })
+    static UIElement Banner(Release r)
+    {
+        var picture = new BitmapImage();
+        using (var stream = Picture(r))
         {
-            double radius = ring[0], c = 2 * Math.PI * radius, at = 0;
-            while (at < c - 8)
-            {
-                double len = Math.Min(c - at - 4, 20 + rnd.NextDouble() * c / 3);
-                var arc = new Ellipse
-                {
-                    Width = radius * 2, Height = radius * 2, Stroke = new SolidColorBrush(rnd.NextDouble() < 0.5 ? Color.FromRgb(0x4C, 0x8D, 0xFF) : Color.FromRgb(0x5E, 0xE6, 0xFF)),
-                    StrokeThickness = ring[1], Opacity = 0.35 + rnd.NextDouble() * 0.5,
-                    StrokeDashArray = new DoubleCollection { len / ring[1], c / ring[1] }, StrokeDashOffset = -at / ring[1],
-                };
-                Canvas.SetLeft(arc, 820 - radius); Canvas.SetTop(arc, 85 - radius);
-                art.Children.Add(arc);
-                at += len + 4;
-            }
+            picture.BeginInit();
+            picture.CacheOption = BitmapCacheOption.OnLoad;
+            picture.StreamSource = stream;
+            picture.EndInit();
         }
-        var words = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(26, 0, 0, 0), MaxWidth = 560, HorizontalAlignment = HorizontalAlignment.Left };
-        words.Children.Add(new TextBlock { Text = "WHAT’S NEW IN", FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Color.FromArgb(0xCC, 255, 255, 255)) });
-        words.Children.Add(new TextBlock { Text = r.Version, FontSize = 34, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White });
-        words.Children.Add(new TextBlock { Text = r.Title, FontSize = 14, TextWrapping = TextWrapping.Wrap, Foreground = new SolidColorBrush(Color.FromArgb(0xE6, 255, 255, 255)) });
-        var ground = new LinearGradientBrush(Color.FromRgb(0x0A, 0x12, 0x26), Color.FromRgb(0x0D, 0x1D, 0x34), 20);
-        var grid = new Grid { Width = 960, Height = 170, Background = ground };
-        grid.Children.Add(art);
-        grid.Children.Add(words);
-        return grid;
+        picture.Freeze();
+        return new Image { Source = picture, Width = 960, Height = 170, Stretch = Stretch.UniformToFill };
     }
 }

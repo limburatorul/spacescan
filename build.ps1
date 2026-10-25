@@ -13,7 +13,6 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 
-& "$root\make-icon.ps1" | Write-Host
 cmd /c "`"$root\build.cmd`""
 if ($LASTEXITCODE -ne 0) { throw "compile failed" }
 
