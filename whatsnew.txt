@@ -1,6 +1,10 @@
 # What's new in SpaceScan, newest first. Built into the exe (build.cmd, WhatsNew.cs).
 # "## version | yyyy-MM-dd | title", then the release's lines: "**Heading**", "- point", or a plain paragraph.
 
+## 1.4.2 | 2026-10-26 | Updates no longer leave SpaceScan running as administrator
+- After updating itself, SpaceScan started again as administrator, and so did everything you opened from it: **Open in File Labs**, **Back up with Backup Labs**, Shelf's move dialog and your files. Other apps then couldn't reach the ones it had opened. Updates now bring SpaceScan back as you; **Restart as administrator** is still there when a scan needs it.
+- This one update still comes through the old updater, so if SpaceScan restarted on its own, close it once and open it again.
+
 ## 1.4.1 | 2026-10-25 | A new icon
 - **A new icon**, brighter and easier to spot in the taskbar.
 - What's new now shows a picture for each release.
