@@ -348,7 +348,10 @@ static class Updater
     /// the caller closes right after. Throws Win32Exception when the user says no to UAC: nothing changed then.</summary>
     internal static void Install(string installer)
     {
-        Process.Start(new ProcessStartInfo(installer, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART") { UseShellExecute = true, Verb = "runas" });
+        // Not Verb = "runas": started elevated, Setup has no un-elevated user to go back to, and its runasoriginaluser restart
+        // brought the app back as administrator (26.10.2026: File Labs, whose pipe then refused every hand-off). Setup asks for
+        // elevation itself (PrivilegesRequired=admin, asInvoker manifest) and restarts the app as the user.
+        Process.Start(new ProcessStartInfo(installer, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART") { UseShellExecute = true });
     }
 }
 
