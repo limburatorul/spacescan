@@ -25,8 +25,8 @@ using WinForms = System.Windows.Forms;
 [assembly: System.Reflection.AssemblyProduct("SpaceScan")]
 [assembly: System.Reflection.AssemblyCompany("Protagonist Labs")]
 [assembly: System.Reflection.AssemblyCopyright("MIT licence")]
-[assembly: System.Reflection.AssemblyVersion("1.4.2")]
-[assembly: System.Reflection.AssemblyFileVersion("1.4.2")]
+[assembly: System.Reflection.AssemblyVersion("1.4.3")]
+[assembly: System.Reflection.AssemblyFileVersion("1.4.3")]
 
 // The folder the Protagonist Labs apps share on this PC (%APPDATA%\ProtagonistLabs): each app writes its card in
 // apps\, and what it offers the others in data\. SpaceScan writes its card, and reads Shelf's games, to name their
@@ -726,6 +726,7 @@ class MainUI
         Find<TextBlock>("updateText").Text = "SpaceScan " + Updater.Current;
         Find<Button>("updateBtn").Click += delegate { CheckForUpdates(true); };
         Find<Button>("whatsNewBtn").Click += delegate { excludePopup.IsOpen = false; WhatsNew.Open(Window); };
+        Find<Button>("pizzaBtn").Click += delegate { Process.Start(new ProcessStartInfo("https://buymeacoffee.com/protagonistlabs") { UseShellExecute = true }); };
         Window.ContentRendered += delegate { WhatsNew.OpenOnceAfterUpdate(Window); }; // an owner must have been shown
         Find<Button>("findBtn").Click += delegate { RunSearch(); };
         Find<Button>("dupBtn").Click += delegate { RunDupes(); };

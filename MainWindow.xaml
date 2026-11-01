@@ -457,6 +457,8 @@
           <DockPanel Margin="0,10,0,0">
             <Button x:Name="updateBtn" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Check for updates" Margin="10,0,0,0"/>
             <Button x:Name="whatsNewBtn" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="What's new" Margin="10,0,0,0"/>
+            <Button x:Name="pizzaBtn" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="&#x1F355; Buy me a pizza" Margin="10,0,0,0"
+                    ToolTip="Optional. It goes toward code signing and a Steam listing."/>
             <TextBlock x:Name="updateText" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{StaticResource Dim}"/>
           </DockPanel>
         </StackPanel>
