@@ -97,6 +97,27 @@
         <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#6a9fff"/></Trigger>
       </Style.Triggers>
     </Style>
+    <!-- The pizza button, the same red in every free app; its glow is pulsed by MainUI.Nudge. -->
+    <Style x:Key="Pizza" TargetType="Button" BasedOn="{StaticResource Ghost}">
+      <Setter Property="Foreground" Value="White"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="b" CornerRadius="17" Background="#D63A3A">
+              <Grid>
+                <Border x:Name="glow" CornerRadius="17" Background="#F25555" Opacity="0"/>
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+              </Grid>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="b" Property="Background" Value="#E54848"/></Trigger>
+              <Trigger Property="IsPressed" Value="True"><Setter TargetName="b" Property="Background" Value="#BF3030"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
 
     <!-- Segmented control: active tab = accent at .17 plus a 1px inner ring. -->
     <Style x:Key="Seg" TargetType="RadioButton">
@@ -457,8 +478,6 @@
           <DockPanel Margin="0,10,0,0">
             <Button x:Name="updateBtn" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Check for updates" Margin="10,0,0,0"/>
             <Button x:Name="whatsNewBtn" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="What's new" Margin="10,0,0,0"/>
-            <Button x:Name="pizzaBtn" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="&#x1F355; Buy me a pizza" Margin="10,0,0,0"
-                    ToolTip="Optional. It goes toward code signing and a Steam listing."/>
             <TextBlock x:Name="updateText" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{StaticResource Dim}"/>
           </DockPanel>
         </StackPanel>
@@ -486,6 +505,8 @@
 
       <DockPanel Grid.Row="1" Margin="0,6,0,12">
         <Button x:Name="exportBtn" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Content="Export  ▾"/>
+        <Button x:Name="pizzaBtn" DockPanel.Dock="Right" Style="{StaticResource Pizza}" Content="&#x1F355; Buy me a pizza" AutomationProperties.Name="Buy me a pizza"
+                ToolTip="Optional. It goes toward code signing and a Steam listing."/>
         <Border Background="{StaticResource Panel}" BorderBrush="{StaticResource Edge}" BorderThickness="1" CornerRadius="19" Padding="3" HorizontalAlignment="Left">
           <StackPanel Orientation="Horizontal">
             <RadioButton x:Name="tabDrives" Style="{StaticResource Seg}" GroupName="view" Content="Drives"/>
