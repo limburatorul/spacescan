@@ -1,6 +1,11 @@
 # What's new in SpaceScan, newest first. Built into the exe (build.cmd, WhatsNew.cs).
 # "## version | yyyy-MM-dd | title", then the release's lines: "**Heading**", "- point", or a plain paragraph.
 
+## 1.4.4 | 2026-11-03 | Buy me a pizza, where you can see it
+The pizza button left Settings for the main window, so you no longer have to go looking for it.
+**Buy me a pizza**
+- It sits beside **Export** now, in red, with a small nudge now and then. It's still optional, it opens a page in your browser, and it goes toward code signing and a Steam listing.
+
 ## 1.4.3 | 2026-11-01 | Buy me a pizza
 - **Buy me a pizza** in Settings, if you'd like to chip in. It's optional, and it goes toward code signing and a Steam listing.
 
